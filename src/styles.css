@@ -273,3 +273,55 @@ html,body,#root{width:100%;height:100%;min-height:100%;margin:0;overflow:hidden}
   .new-group{min-height:54px!important;padding-bottom:calc(12px + env(safe-area-inset-bottom))!important;border-radius:16px!important;}
   .chat{position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;min-height:100dvh!important;max-height:100dvh!important;background:var(--bg)!important;}
 }
+
+
+/* v19 — mobile chat buttons anchored to the real bottom of the screen */
+@media (max-width:760px){
+  .sidebar{
+    position:fixed!important;
+    inset:0!important;
+    width:100vw!important;
+    height:100dvh!important;
+    min-height:100dvh!important;
+    max-height:100dvh!important;
+    display:flex!important;
+    flex-direction:column!important;
+    padding:calc(10px + env(safe-area-inset-top)) 10px 0!important;
+    overflow:hidden!important;
+  }
+
+  .side-list{
+    flex:1 1 auto!important;
+    min-height:0!important;
+    padding-bottom:132px!important;
+  }
+
+  .new-chat-actions{
+    position:absolute!important;
+    left:10px!important;
+    right:10px!important;
+    bottom:max(8px, env(safe-area-inset-bottom))!important;
+    margin:0!important;
+    padding:0!important;
+    gap:10px!important;
+    background:transparent!important;
+    z-index:20!important;
+  }
+
+  .new-chat{
+    width:100%!important;
+    min-height:76px!important;
+    margin:0!important;
+    border-radius:20px!important;
+    font-size:20px!important;
+  }
+
+  .new-group{
+    width:100%!important;
+    min-height:58px!important;
+    margin:0!important;
+    padding:12px!important;
+    border-radius:16px!important;
+    font-size:18px!important;
+  }
+}
