@@ -88,6 +88,13 @@ export default function App() {
     return () => window.removeEventListener("beforeinstallprompt", onInstall);
   }, []);
 
+  // Keep the PWA service worker installed. Browser Push can wake it even when
+  // the page itself is closed (after the user has granted notification permission).
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(err => console.warn("SW registration failed", err));
+  }, []);
+
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoading(false); });
@@ -180,19 +187,55 @@ export default function App() {
     };
   }, [session?.user?.id, notifications]);
 
+  async function savePushSubscription() {
+    if (!supabase || !session?.user?.id || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    const publicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+    if (!publicKey) { console.warn("VITE_VAPID_PUBLIC_KEY is not configured"); return; }
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      const padding = "=".repeat((4 - publicKey.length % 4) % 4);
+      const base64 = (publicKey + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const raw = atob(base64);
+      const key = new Uint8Array([...raw].map(c => c.charCodeAt(0)));
+      subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    }
+    const json = subscription.toJSON();
+    const { error: pushError } = await supabase.from("push_subscriptions").upsert({
+      user_id: session.user.id,
+      endpoint: subscription.endpoint,
+      p256dh: json.keys?.p256dh || "",
+      auth: json.keys?.auth || "",
+      user_agent: navigator.userAgent,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "endpoint" });
+    if (pushError) throw pushError;
+  }
+
   async function notifyNewMessage(m: Message) {
     if (!notifications || !("Notification" in window) || Notification.permission !== "granted") return;
     const chat = chats.find(c => c.id === m.chat_id);
-    try { new Notification(chat?.name || "Новое сообщение", { body: previewOf(m), icon: "/icon.svg", tag: `groza-${m.chat_id}` }); } catch { /* ignore */ }
+    try {
+      const registration = "serviceWorker" in navigator ? await navigator.serviceWorker.ready : null;
+      if (registration) await registration.showNotification(chat?.name || "Новое сообщение", { body: previewOf(m), icon: "/icon-192.png", badge: "/icon-192.png", tag: `groza-${m.chat_id}`, data: { chatId: m.chat_id, url: "/" } });
+      else new Notification(chat?.name || "Новое сообщение", { body: previewOf(m), icon: "/icon-192.png", tag: `groza-${m.chat_id}` });
+    } catch { /* ignore */ }
   }
 
   async function requestNotifications() {
     if (!("Notification" in window)) { setError("Этот браузер не поддерживает уведомления."); return; }
     const permission = await Notification.requestPermission();
-    if (permission === "granted") { setNotifications(true); localStorage.setItem("groza-notifications", "on"); }
-    else setError("Разрешение на уведомления не выдано.");
+    if (permission === "granted") {
+      try { await savePushSubscription(); } catch (e: any) { setError(`Уведомления разрешены, но Push не настроен: ${e?.message || "ошибка"}`); return; }
+      setNotifications(true); localStorage.setItem("groza-notifications", "on");
+    } else setError("Разрешение на уведомления не выдано.");
   }
 
+  async function sendPush(chatId: string, message: Message) {
+    if (!supabase) return;
+    try { await supabase.functions.invoke("send-push", { body: { chat_id: chatId, content: previewOf(message), message_type: message.message_type || "text" } }); }
+    catch (e) { console.warn("Push send failed", e); }
+  }
   async function setOnline(value: boolean) {
     if (!supabase || !session?.user?.id) return;
     await supabase.from("profiles").update({ online: value, last_seen: new Date().toISOString() }).eq("id", session.user.id);
@@ -408,7 +451,7 @@ export default function App() {
     const value = text.trim(); if (!value || !selected || !supabase || !session?.user?.id || uploadingPhoto) return;
     const { data, error: e } = await supabase.from("messages").insert({ chat_id: selected.id, sender_id: session.user.id, content: value, message_type: "text", reply_to_id: replyTo?.id || null }).select().single();
     if (e) { setError(e.message); return; }
-    if (data) { const m = data as Message; setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m]); updateChatPreview(m.chat_id, previewOf(m), m.created_at); }
+    if (data) { const m = data as Message; setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m]); updateChatPreview(m.chat_id, previewOf(m), m.created_at); await sendPush(m.chat_id, m); }
     setText(""); setReplyTo(null); sendTyping(false);
   }
 
@@ -432,7 +475,7 @@ export default function App() {
         media_url: publicUrl.publicUrl, media_type: mime
       }).select().single();
       if (messageError) throw messageError;
-      if (data) { const m = data as Message; setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m]); updateChatPreview(m.chat_id, previewOf(m), m.created_at); }
+      if (data) { const m = data as Message; setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m]); updateChatPreview(m.chat_id, previewOf(m), m.created_at); await sendPush(m.chat_id, m); }
     } catch (e: any) {
       console.error("PHOTO UPLOAD:", e);
       setError(`Не удалось отправить фото: ${e?.message || "неизвестная ошибка"}`);
@@ -453,7 +496,7 @@ export default function App() {
       const { data: publicUrl } = supabase.storage.from("chat-media").getPublicUrl(path);
       const { data, error: messageError } = await supabase.from("messages").insert({ chat_id:selected.id, sender_id:session.user.id, content:file.name, message_type:"file", media_url:publicUrl.publicUrl, media_type:file.type || "application/octet-stream" }).select().single();
       if (messageError) throw messageError;
-      if (data) { const m=data as Message; setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]); updateChatPreview(m.chat_id, previewOf(m), m.created_at); }
+      if (data) { const m=data as Message; setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]); updateChatPreview(m.chat_id, previewOf(m), m.created_at); await sendPush(m.chat_id, m); }
     } catch(e:any) { setError(`Не удалось отправить файл: ${e?.message || "неизвестная ошибка"}`); }
     finally { setUploadingFile(false); }
   }

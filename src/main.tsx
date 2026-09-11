@@ -14,14 +14,12 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 
-// iPhone full-screen handling is done with CSS dynamic viewport units (100dvh).
-// Do not replace 100dvh with visualViewport pixel height: on iOS that can stop
-// the app above the bottom safe area/Home indicator.
+// PWA + Web Push. The service worker stays installed so push messages can be
+// displayed while the site is closed (the browser/OS still controls delivery).
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations().then(registrations => registrations.forEach(reg => reg.unregister()));
-}
-if ("caches" in window) {
-  caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith("groza-")).map(k => caches.delete(k))));
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(err => console.warn("Service worker error", err));
+  });
 }
 
 createRoot(document.getElementById("root")!).render(
