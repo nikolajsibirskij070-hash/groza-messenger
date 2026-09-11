@@ -52,6 +52,7 @@ export default function App() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [groupCreatorOpen, setGroupCreatorOpen] = useState(false);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupAvatar, setGroupAvatar] = useState<File | null>(null);
   const [groupMemberIds, setGroupMemberIds] = useState<string[]>([]);
@@ -576,7 +577,7 @@ export default function App() {
 
   return <div className="app">
     <aside className={`sidebar ${selected ? "mobile-hidden" : ""}`}>
-      <header className="brand"><div className="logo">ϟ</div><div><b>ГРОЗА <em className="version-tag">v8</em></b><span>мессенджер</span></div><div className="connection"><Wifi size={14}/></div></header>
+      <header className="brand"><div className="logo">ϟ</div><div><b>ГРОЗА <em className="version-tag">v8</em></b><span>мессенджер</span></div><div className="connection"><Wifi size={14}/></div><div className="create-menu-wrap"><button className="create-plus" aria-label="Создать" onClick={() => setCreateMenuOpen(v => !v)}><Plus size={24}/></button>{createMenuOpen && <div className="create-menu"><button onClick={() => { setCreateMenuOpen(false); setSection("people"); setPeople([]); setPeopleQuery(""); setPeopleSearched(false); }}><MessageCircle size={18}/>Новый чат</button><button onClick={() => { setCreateMenuOpen(false); setGroupCreatorOpen(true); loadGroupCandidates(""); }}><Users size={18}/>Создать группу</button></div>}</div></header>
       <div className="search"><Search size={18}/><input placeholder="Поиск" value={search} onChange={e => setSearch(e.target.value)}/>{unreadTotal > 0 && <span className="total-badge">{unreadTotal}</span>}</div>
       <nav><button className={section === "chats" ? "active" : ""} onClick={() => setSection("chats")}><MessageCircle/>Чаты{unreadTotal > 0 && <em>{unreadTotal}</em>}</button><button className={section === "people" ? "active" : ""} onClick={() => { setSection("people"); setPeople([]); setPeopleQuery(""); setPeopleSearched(false); }}><Users/>Люди</button><button className={section === "settings" ? "active" : ""} onClick={() => setSection("settings")}><Settings/>Настройки</button></nav>
       <div className="side-list">
@@ -590,7 +591,7 @@ export default function App() {
         {section === "chats" && chats.length === 0 && <div className="empty"><MessageCircle size={35}/><b>Нет открытых чатов</b><span>Найдите пользователя и начните разговор</span><button className="primary compact" onClick={() => setSection("people")}>Найти людей</button></div>}
         {section === "settings" && <SettingsPanel dark={dark} setDark={setDark} notifications={notifications} requestNotifications={requestNotifications} setNotifications={(v: boolean) => { setNotifications(v); localStorage.setItem("groza-notifications", v ? "on" : "off"); }} installEvent={installEvent} logout={logout} userId={session.user.id}/>}      
       </div>
-      <div className="new-chat-actions"><button className="new-chat" onClick={() => setSection("people")}><Plus/>Новый чат</button><button className="new-group" onClick={() => { setGroupCreatorOpen(true); loadGroupCandidates(""); }}><Users/>Новая группа</button></div>
+
     </aside>
     <main className="main">
       {selected ? <ChatView selected={selected} messages={messages} text={text} setText={setText} send={send} back={() => { setSelected(null); setMessages([]); setReplyTo(null); }} sessionId={session.user.id} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} sendPhoto={sendPhoto} sendFile={sendFile} uploadingFile={uploadingFile} deleteChat={deleteCurrentChat} blockUser={blockCurrentUser} uploadingPhoto={uploadingPhoto} onOpenPhoto={setPhotoViewer} replyTo={replyTo} setReplyTo={setReplyTo} reactions={reactions} toggleReaction={toggleReaction} copyText={copyText} sendTyping={sendTyping} otherTyping={otherTyping} senderProfiles={senderProfiles} /> : <Welcome onPeople={() => { setSection("people"); setPeople([]); setPeopleQuery(""); setPeopleSearched(false); }} />}
