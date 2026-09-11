@@ -190,7 +190,7 @@ export default function App() {
   async function savePushSubscription() {
     if (!supabase || !session?.user?.id || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
     const publicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-    if (!publicKey) { console.warn("VITE_VAPID_PUBLIC_KEY is not configured"); return; }
+    if (!publicKey) throw new Error("Не настроен VITE_VAPID_PUBLIC_KEY");
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
@@ -205,9 +205,7 @@ export default function App() {
       user_id: session.user.id,
       endpoint: subscription.endpoint,
       p256dh: json.keys?.p256dh || "",
-      auth: json.keys?.auth || "",
-      user_agent: navigator.userAgent,
-      updated_at: new Date().toISOString()
+      auth: json.keys?.auth || ""
     }, { onConflict: "endpoint" });
     if (pushError) throw pushError;
   }
