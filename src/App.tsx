@@ -8,7 +8,7 @@ import { supabase, configured } from "./lib/supabase";
 
 type Profile = {
   id: string; username: string; display_name: string;
-  avatar_url?: string | null; bio?: string | null;
+  avatar_url?: string | null; bio?: string | null; emoji_status?: string | null;
   online?: boolean | null; last_seen?: string | null;
 };
 type Chat = {
@@ -18,7 +18,7 @@ type Chat = {
 };
 type Message = {
   id: string; chat_id: string; sender_id: string; content: string;
-  message_type?: "text" | "image" | string; media_url?: string | null; media_type?: string | null;
+  message_type?: "text" | "image" | "file" | "poll" | string; media_url?: string | null; media_type?: string | null;
   created_at: string; updated_at?: string; edited?: boolean; deleted_at?: string | null; reply_to_id?: string | null; delivered_at?: string | null; read_at?: string | null;
 };
 
@@ -76,11 +76,14 @@ export default function App() {
   const [reactions, setReactions] = useState<Record<string, {emoji:string; user_id:string}[]>>({});
   const [typing, setTyping] = useState(false);
   const [otherTyping, setOtherTyping] = useState(false);
+  const [pinned, setPinned] = useState<Message[]>([]);
   const chatIdsRef = useRef<Set<string>>(new Set());
   const selectedChatIdRef = useRef<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    document.documentElement.dataset.chatBg = localStorage.getItem("groza-chat-bg") || "default";
+    document.documentElement.dataset.bubbleColor = localStorage.getItem("groza-bubble-color") || "violet";
     document.documentElement.dataset.theme = localStorage.getItem("groza-theme") || (dark ? "dark" : "light");
     localStorage.setItem("groza-theme", localStorage.getItem("groza-theme") || (dark ? "dark" : "light"));
   }, [dark]);
@@ -116,7 +119,7 @@ export default function App() {
 
   useEffect(() => {
     selectedChatIdRef.current = selected?.id ?? null;
-    if (selected) { loadMessages(selected.id); loadReactions(selected.id); markRead(selected.id); }
+    if (selected) { loadMessages(selected.id); loadReactions(selected.id); loadPinned(selected.id); markRead(selected.id); }
   }, [selected?.id]);
 
   useEffect(() => {
@@ -158,7 +161,7 @@ export default function App() {
         }
       })
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_members", filter: `user_id=eq.${userId}` }, () => loadChats())
-      .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, () => { if (selectedChatIdRef.current) loadReactions(selectedChatIdRef.current); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, () => { if (selectedChatIdRef.current) loadReactions(selectedChatIdRef.current); }).on("postgres_changes", { event: "*", schema: "public", table: "poll_votes" }, () => { window.dispatchEvent(new Event("groza-poll-update")); })
       .on("postgres_changes", { event: "*", schema: "public", table: "typing_status" }, payload => { const row:any=payload.new; if (row && row.chat_id===selectedChatIdRef.current && row.user_id!==userId) setOtherTyping(!!row.is_typing); })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, payload => {
         const p = payload.new as Profile;
@@ -275,7 +278,7 @@ export default function App() {
     // Exact username search only: registered users are never listed automatically.
     const { data, error: e } = await supabase
       .from("profiles")
-      .select("id,username,display_name,avatar_url,bio,online,last_seen")
+      .select("id,username,display_name,avatar_url,bio,emoji_status,online,last_seen")
       .neq("id", session.user.id)
       .eq("username", clean)
       .limit(1);
@@ -332,7 +335,7 @@ export default function App() {
       if (otherIds.length) {
         const { data: ps, error: pe } = await supabase
           .from("profiles")
-          .select("id,username,display_name,avatar_url,bio,online,last_seen")
+          .select("id,username,display_name,avatar_url,bio,emoji_status,online,last_seen")
           .in("id", otherIds);
         if (pe) throw pe;
         for (const p of (ps || []) as Profile[]) profileMap[p.id] = p;
@@ -398,7 +401,7 @@ export default function App() {
     setMessages(rows);
     const ids = [...new Set(rows.map(m => m.sender_id).filter(Boolean))];
     if (ids.length) {
-      const { data: ps } = await supabase.from("profiles").select("id,username,display_name,avatar_url,bio,online,last_seen").in("id", ids);
+      const { data: ps } = await supabase.from("profiles").select("id,username,display_name,avatar_url,bio,emoji_status,online,last_seen").in("id", ids);
       setSenderProfiles(prev => {
         const next = { ...prev };
         for (const profile of (ps || []) as Profile[]) next[profile.id] = profile;
@@ -445,6 +448,29 @@ export default function App() {
     const grouped: Record<string, any[]> = {};
     (data || []).forEach((r:any) => (grouped[r.message_id] ||= []).push(r));
     setReactions(grouped);
+  }
+
+  async function loadPinned(chatId: string) {
+    if (!supabase) return;
+    const { data, error } = await supabase.from("chat_pins").select("message_id,messages(*)").eq("chat_id", chatId).order("created_at", {ascending:false});
+    if (!error) setPinned((data||[]).map((x:any)=>x.messages).filter(Boolean));
+    else setPinned([]);
+  }
+
+  async function togglePin(message: Message) {
+    if (!supabase || !selected || !session?.user?.id) return;
+    const exists = pinned.some(x=>x.id===message.id);
+    if (exists) await supabase.from("chat_pins").delete().eq("chat_id",selected.id).eq("message_id",message.id);
+    else await supabase.from("chat_pins").upsert({chat_id:selected.id,message_id:message.id,pinned_by:session.user.id});
+    await loadPinned(selected.id);
+  }
+
+  async function createPoll(question:string, options:string[]) {
+    if (!supabase || !selected || selected.type!=="group" || !session?.user?.id) return;
+    const payload = JSON.stringify({question, options: options.filter(Boolean)});
+    const {data,error:e}=await supabase.from("messages").insert({chat_id:selected.id,sender_id:session.user.id,content:payload,message_type:"poll"}).select().single();
+    if(e){setError(e.message);return;}
+    if(data){const m=data as Message; setMessages(prev=>[...prev,m]); updateChatPreview(m.chat_id,"📊 Опрос",m.created_at);}
   }
 
   async function toggleReaction(messageId: string, emoji: string) {
@@ -533,7 +559,7 @@ export default function App() {
     if (ce) { setError(ce.message); return; }
     const ids = [...new Set((members || []).map((m:any)=>m.user_id))];
     if (!ids.length) { setGroupCandidates([]); return; }
-    let request = supabase.from("profiles").select("id,username,display_name,avatar_url,bio,online,last_seen").in("id", ids).order("display_name").limit(50);
+    let request = supabase.from("profiles").select("id,username,display_name,avatar_url,bio,emoji_status,online,last_seen").in("id", ids).order("display_name").limit(50);
     const q=query.trim(); if(q) request=request.or(`username.ilike.%${q}%,display_name.ilike.%${q}%`);
     const { data, error:e }=await request;
     if(e){setError(e.message);return;}
@@ -604,20 +630,20 @@ export default function App() {
           <div className="people-search-row"><Search size={18}/><input placeholder="Введите @username" value={peopleQuery} onChange={e => { setPeopleQuery(e.target.value); setPeopleSearched(false); }} onKeyDown={e => { if (e.key === "Enter") loadPeople(); }}/><button className="people-find" onClick={() => loadPeople()}><Search size={17}/>Найти</button></div>
           {!peopleSearched && <div className="people-search-hint"><Users size={28}/><b>Найдите человека по username</b><span>Введите точный @username. Список зарегистрированных пользователей не показывается.</span></div>}
           {peopleSearched && !visiblePeople.length && <div className="people-search-hint"><Search size={28}/><b>Пользователь не найден</b><span>Проверьте username и попробуйте ещё раз.</span></div>}
-          {visiblePeople.map(p => <button className="person" key={p.id} onClick={() => startChat(p)}><Avatar p={p}/><span><b>{p.display_name}</b><small>@{p.username}</small><small className={p.online ? "online-text" : ""}>{p.online ? "● В сети" : p.last_seen ? `Был(а) ${dateOf(p.last_seen)} в ${timeOf(p.last_seen)}` : "Не в сети"}</small></span><Plus size={17}/></button>)}
+          {visiblePeople.map(p => <button className="person" key={p.id} onClick={() => startChat(p)}><Avatar p={p}/><span><b>{p.emoji_status ? `${p.emoji_status} ` : ""}{p.display_name}</b><small>@{p.username}</small><small className={p.online ? "online-text" : ""}>{p.online ? "● В сети" : p.last_seen ? `Был(а) ${dateOf(p.last_seen)} в ${timeOf(p.last_seen)}` : "Не в сети"}</small></span><Plus size={17}/></button>)}
         </div>}
         {section === "chats" && !chatsReady && <div className="chat-list-loading"><i/><i/><i/><span>Загружаем чаты…</span></div>}
-        {section === "chats" && chatsReady && chats.map(chat => <button className={`person chat-row ${selected?.id === chat.id ? "chat-selected" : ""}`} key={chat.id} onClick={() => { setSelected(chat); setSection("chats"); }}><Avatar p={chat.other || { id: chat.otherId || chat.id, username: "", display_name: chat.name, avatar_url: chat.avatar_url }}/><span><b>{chat.name}</b>{chat.username && <small>@{chat.username}</small>}<small>{chat.last}</small></span>{chat.unread ? <strong className="unread-badge">{chat.unread}</strong> : chat.time && <small className="row-time">{chat.time}</small>}</button>)}
+        {section === "chats" && chatsReady && chats.map(chat => <button className={`person chat-row ${selected?.id === chat.id ? "chat-selected" : ""}`} key={chat.id} onClick={() => { setSelected(chat); setSection("chats"); }}><Avatar p={chat.other || { id: chat.otherId || chat.id, username: "", display_name: chat.name, avatar_url: chat.avatar_url }}/><span><b>{chat.other?.emoji_status ? `${chat.other.emoji_status} ` : ""}{chat.name}</b>{chat.username && <small>@{chat.username}</small>}<small>{chat.last}</small></span>{chat.unread ? <strong className="unread-badge">{chat.unread}</strong> : chat.time && <small className="row-time">{chat.time}</small>}</button>)}
         {section === "chats" && chatsReady && chats.length === 0 && <div className="empty"><MessageCircle size={35}/><b>Нет открытых чатов</b><span>Найдите пользователя и начните разговор</span><button className="primary compact" onClick={() => setSection("people")}>Найти людей</button></div>}
         {section === "settings" && <SettingsPanel dark={dark} setDark={setDark} notifications={notifications} requestNotifications={requestNotifications} setNotifications={(v: boolean) => { setNotifications(v); localStorage.setItem("groza-notifications", v ? "on" : "off"); }} installEvent={installEvent} logout={logout} userId={session.user.id}/>}      
       </div>
 
     </aside>
     <main className="main">
-      {selected ? <ChatView selected={selected} messages={messages} text={text} setText={setText} send={send} back={() => { setSelected(null); setMessages([]); setReplyTo(null); }} sessionId={session.user.id} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} sendPhoto={sendPhoto} sendFile={sendFile} uploadingFile={uploadingFile} deleteChat={deleteCurrentChat} blockUser={blockCurrentUser} uploadingPhoto={uploadingPhoto} onOpenPhoto={setPhotoViewer} replyTo={replyTo} setReplyTo={setReplyTo} reactions={reactions} toggleReaction={toggleReaction} copyText={copyText} sendTyping={sendTyping} otherTyping={otherTyping} senderProfiles={senderProfiles} /> : <Welcome onPeople={() => { setSection("people"); setPeople([]); setPeopleQuery(""); setPeopleSearched(false); }} />}
+      {selected ? <ChatView selected={selected} messages={messages} text={text} setText={setText} send={send} back={() => { setSelected(null); setMessages([]); setReplyTo(null); }} sessionId={session.user.id} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} sendPhoto={sendPhoto} sendFile={sendFile} uploadingFile={uploadingFile} deleteChat={deleteCurrentChat} blockUser={blockCurrentUser} uploadingPhoto={uploadingPhoto} onOpenPhoto={setPhotoViewer} replyTo={replyTo} setReplyTo={setReplyTo} reactions={reactions} toggleReaction={toggleReaction} copyText={copyText} sendTyping={sendTyping} otherTyping={otherTyping} senderProfiles={senderProfiles} pinned={pinned} togglePin={togglePin} createPoll={createPoll} /> : <Welcome onPeople={() => { setSection("people"); setPeople([]); setPeopleQuery(""); setPeopleSearched(false); }} />}
     </main>
     {photoViewer && <div className="photo-viewer" role="dialog" aria-modal="true" onClick={() => setPhotoViewer(null)}><button className="photo-viewer-close" onClick={() => setPhotoViewer(null)} aria-label="Закрыть"><X/></button><img src={photoViewer} alt="Фотография" onClick={e => e.stopPropagation()}/></div>}
-    {groupCreatorOpen && <div className="modal-backdrop" onClick={()=>setGroupCreatorOpen(false)}><div className="group-modal" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={()=>setGroupCreatorOpen(false)}><X/></button><h2>Новая группа</h2><input value={groupName} onChange={e=>setGroupName(e.target.value)} placeholder="Название группы" maxLength={80}/><label className="group-avatar-picker">🖼️ Аватар группы<input type="file" accept="image/*" onChange={e=>setGroupAvatar(e.target.files?.[0]||null)}/></label><div className="group-step"><b>Участники</b><small>Выберите людей, которых хотите добавить в группу</small><div className="group-search"><Search size={16}/><input value={groupMemberQuery} onChange={e=>{setGroupMemberQuery(e.target.value);loadGroupCandidates(e.target.value)}} placeholder="Поиск участников"/></div><div className="group-picked">{groupMemberIds.length ? `Выбрано: ${groupMemberIds.length}` : "Пока никто не выбран"}</div><div className="group-candidates">{groupCandidates.map(p=>{const on=groupMemberIds.includes(p.id);return <button type="button" className={on?"chosen":""} key={p.id} onClick={()=>setGroupMemberIds(prev=>on?prev.filter(id=>id!==p.id):[...prev,p.id])}><Avatar p={p}/><span><b>{p.display_name}</b><small>@{p.username}</small></span>{on?<Check size={18}/>:<Plus size={18}/>}</button>})}</div></div><button className="primary" onClick={createGroup}>Создать группу</button></div></div>}
+    {groupCreatorOpen && <div className="modal-backdrop" onClick={()=>setGroupCreatorOpen(false)}><div className="group-modal" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={()=>setGroupCreatorOpen(false)}><X/></button><h2>Новая группа</h2><input value={groupName} onChange={e=>setGroupName(e.target.value)} placeholder="Название группы" maxLength={80}/><label className="group-avatar-picker">🖼️ Аватар группы<input type="file" accept="image/*" onChange={e=>setGroupAvatar(e.target.files?.[0]||null)}/></label><div className="group-step"><b>Участники</b><small>Выберите людей, которых хотите добавить в группу</small><div className="group-search"><Search size={16}/><input value={groupMemberQuery} onChange={e=>{setGroupMemberQuery(e.target.value);loadGroupCandidates(e.target.value)}} placeholder="Поиск участников"/></div><div className="group-picked">{groupMemberIds.length ? `Выбрано: ${groupMemberIds.length}` : "Пока никто не выбран"}</div><div className="group-candidates">{groupCandidates.map(p=>{const on=groupMemberIds.includes(p.id);return <button type="button" className={on?"chosen":""} key={p.id} onClick={()=>setGroupMemberIds(prev=>on?prev.filter(id=>id!==p.id):[...prev,p.id])}><Avatar p={p}/><span><b>{p.emoji_status ? `${p.emoji_status} ` : ""}{p.display_name}</b><small>@{p.username}</small></span>{on?<Check size={18}/>:<Plus size={18}/>}</button>})}</div></div><button className="primary" onClick={createGroup}>Создать группу</button></div></div>}
     {error && <div className="toast">{error}<button onClick={() => setError("")}>×</button></div>}
   </div>;
 }
@@ -635,12 +661,13 @@ function Welcome({ onPeople }: { onPeople: () => void }) {
   return <div className="welcome"><div className="welcome-logo">ϟ</div><h2>Добро пожаловать в ГРОЗА</h2><p>Личные сообщения в реальном времени.</p><button className="primary compact" onClick={onPeople}><Users size={18}/>Найти людей</button></div>;
 }
 
-function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile, uploadingPhoto, uploadingFile, onOpenPhoto, back, sessionId, editingId, setEditingId, editingText, setEditingText, saveEdit, deleteMessage, deleteChat, blockUser, replyTo, setReplyTo, reactions, toggleReaction, copyText, sendTyping, otherTyping, senderProfiles }: any) {
+function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile, uploadingPhoto, uploadingFile, onOpenPhoto, back, sessionId, editingId, setEditingId, editingText, setEditingText, saveEdit, deleteMessage, deleteChat, blockUser, replyTo, setReplyTo, reactions, toggleReaction, copyText, sendTyping, otherTyping, senderProfiles, pinned, togglePin, createPoll }: any) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [groupManageOpen, setGroupManageOpen] = useState(false);
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
+  const [pollOpen, setPollOpen] = useState(false);
   const isCreator = selected.type === "group" && selected.created_by === sessionId;
   useEffect(() => { requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })); }, [messages.length]);
   const replyMessage = replyTo ? messages.find((x:Message)=>x.id===replyTo.reply_to_id) : null;
@@ -648,11 +675,13 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
     <header className="chat-head">
       <button className="icon-btn back" onClick={back}><ArrowLeft/></button>
       <button className="profile-hit" onClick={()=>selected.type==="group"?setGroupInfoOpen(true):setProfileOpen(true)}><Avatar p={selected.other || { id:selected.otherId||selected.id, display_name:selected.name, avatar_url:selected.avatar_url }}/><div className="chat-title"><b>{selected.name}</b><small className={selected.other?.online ? "online-text" : ""}>{selected.type === "group" ? `${selected.memberCount || 1} участников` : (otherTyping ? "печатает..." : selected.other?.online ? "В сети" : "был(а) недавно")}</small></div></button>
-      <div className="chat-menu-wrap"><button className="icon-btn" onClick={()=>setMenuOpen(v=>!v)}><MoreVertical/></button>{menuOpen&&<div className="chat-menu">{selected.type==="group"&&isCreator&&<button onClick={()=>{setMenuOpen(false);setGroupManageOpen(true)}}><Users size={17}/>Управление группой</button>}<button onClick={()=>{setMenuOpen(false);deleteChat(selected)}}><Trash2 size={17}/>Удалить чат</button>{selected.type!=="group"&&<button className="danger-item" onClick={()=>{setMenuOpen(false);blockUser(selected)}}><Ban size={17}/>Заблокировать</button>}</div>}</div>
+      <div className="chat-menu-wrap"><button className="icon-btn" onClick={()=>setMenuOpen(v=>!v)}><MoreVertical/></button>{menuOpen&&<div className="chat-menu">{selected.type==="group"&&isCreator&&<button onClick={()=>{setMenuOpen(false);setGroupManageOpen(true)}}><Users size={17}/>Управление группой</button>}{selected.type==="group"&&<button onClick={()=>{setMenuOpen(false);setPollOpen(true)}}><BarChart3 size={17}/>Создать опрос</button>}<button onClick={()=>{setMenuOpen(false);deleteChat(selected)}}><Trash2 size={17}/>Удалить чат</button>{selected.type!=="group"&&<button className="danger-item" onClick={()=>{setMenuOpen(false);blockUser(selected)}}><Ban size={17}/>Заблокировать</button>}</div>}</div>
     </header>
-    <div className="messages" ref={scrollRef}>{messages.length ? messages.map((m:Message)=><MessageBubble key={m.id} m={m} mine={m.sender_id===sessionId} messages={messages} onOpenPhoto={onOpenPhoto} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} onReply={setReplyTo} reactions={reactions[m.id]||[]} toggleReaction={toggleReaction} copyText={copyText} senderProfile={senderProfiles?.[m.sender_id]} isGroup={selected.type==="group"}/>) : <div className="chat-empty">Сообщений пока нет</div>}</div>
+    {pinned?.length>0&&<div className="pinned-bar"><span>📌</span><div><b>Закреплённое сообщение{pinned.length>1?` (${pinned.length})`:""}</b><small>{pinned[0]?.content?.startsWith("{")?"📊 Опрос":pinned[0]?.content}</small></div></div>}
+    <div className="messages" ref={scrollRef}>{messages.length ? messages.map((m:Message)=><MessageBubble key={m.id} m={m} mine={m.sender_id===sessionId} messages={messages} onOpenPhoto={onOpenPhoto} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} onReply={setReplyTo} reactions={reactions[m.id]||[]} toggleReaction={toggleReaction} copyText={copyText} senderProfile={senderProfiles?.[m.sender_id]} isGroup={selected.type==="group"} togglePin={togglePin}/>) : <div className="chat-empty">Сообщений пока нет</div>}</div>
     {replyTo&&<div className="reply-bar"><Reply size={17}/><span><b>Ответ</b><small>{replyTo.content}</small></span><button onClick={()=>setReplyTo(null)}><X size={18}/></button></div>}
     <div className="composer"><input id="groza-photo-input" className="photo-input" type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)sendPhoto(file);e.currentTarget.value=""}}/><input id="groza-file-input" className="photo-input" type="file" onChange={e=>{const file=e.target.files?.[0];if(file)sendFile(file);e.currentTarget.value=""}}/><div className="attach-wrap"><button type="button" className={`icon-btn photo-label ${(uploadingPhoto||uploadingFile)?"disabled":""}`} onClick={()=>{const menu=document.getElementById("groza-attach-menu");menu?.classList.toggle("open")}}><Paperclip/></button><div id="groza-attach-menu" className="attach-menu"><label htmlFor="groza-photo-input">Фото</label><label htmlFor="groza-file-input">Файл</label></div></div><input value={text} onChange={e=>{setText(e.target.value);sendTyping(!!e.target.value)}} onBlur={()=>sendTyping(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={uploadingPhoto?"Отправляем фото...":"Сообщение"} disabled={uploadingPhoto}/>{text.trim()?<button className="send" onClick={send}><Send/></button>:<button className="icon-btn mic-btn"><Mic/></button>}</div>
+    {pollOpen&&<PollCreator onClose={()=>setPollOpen(false)} onCreate={(q:string,o:string[])=>{createPoll(q,o);setPollOpen(false)}}/>}
     {groupManageOpen&&isCreator&&<GroupManager chat={selected} userId={sessionId} onClose={()=>setGroupManageOpen(false)}/>}
     {groupInfoOpen&&<GroupInfo chat={selected} onClose={()=>setGroupInfoOpen(false)}/>}
     {profileOpen&&<div className="modal-backdrop" onClick={()=>setProfileOpen(false)}><div className="user-profile-modal" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={()=>setProfileOpen(false)}><X/></button><Avatar p={selected.other || {id:selected.otherId||selected.id,display_name:selected.name,avatar_url:selected.avatar_url}}/><h2>{selected.name}</h2><b>@{selected.other?.username||"user"}</b><p>{selected.other?.bio||"Пользователь ГРОЗЫ"}</p><span className="online-text">{selected.other?.online?"● В сети":"Был(а) недавно"}</span></div></div>}
@@ -661,7 +690,7 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
 
 function GroupInfo({chat,onClose}:any){
  const [members,setMembers]=useState<any[]>([]);
- const [stats,setStats]=useState({photos:0,videos:0,files:0,links:0,voice:0});
+ const [stats,setStats]=useState({photos:0,videos:0,files:0,links:0,voice:0}); const [gallery,setGallery]=useState<any>(null);
  useEffect(()=>{(async()=>{
    if(!supabase)return;
    const [memRes,msgRes]=await Promise.all([
@@ -685,9 +714,10 @@ function GroupInfo({chat,onClose}:any){
    <button className="modal-x" onClick={onClose}><X/></button>
    <div className="group-profile-hero"><Avatar p={avatar}/><div><h2>{chat.name}</h2><small>{members.length} участников</small></div></div>
    <div className="group-profile-actions"><button><Bell size={19}/><span>Звук</span></button><button><SlidersHorizontal size={19}/><span>Управление</span></button><button><BarChart3 size={19}/><span>Медиа</span></button><button><MoreVertical size={19}/><span>Ещё</span></button></div>
-   <div className="group-profile-media">{mediaRows.map(([Icon,count,label]:any)=><button key={label}><Icon size={20}/><span>{count} {label}</span></button>)}</div>
+   <div className="group-profile-media">{mediaRows.map(([Icon,count,label]:any)=><button key={label} onClick={()=>setGallery(label)}><Icon size={20}/><span>{count} {label}</span></button>)}</div>
    <div className="group-profile-members-head"><div><Users size={19}/><b>{members.length} УЧАСТНИКА</b></div><UserPlus size={20}/></div>
    <div className="group-profile-members">{members.map((m:any)=>{const p=m.profiles||{};return <div className="group-profile-member" key={m.user_id}><Avatar p={{id:m.user_id,display_name:p.display_name||"Пользователь",username:p.username||"",avatar_url:p.avatar_url,online:p.online}}/><span><b>{p.display_name||"Пользователь"}</b><small>{p.online?"в сети":`@${p.username||""}`}</small></span><strong className={`role-badge role-${m.role}`}>{roleName(m.role)}</strong></div>})}</div>
+ {gallery&&<GroupGallery chat={chat} kind={gallery} onClose={()=>setGallery(null)}/>}
  </div></div>
 }
 
@@ -701,34 +731,56 @@ function GroupManager({chat,userId,onClose}:any){
  const remove=async(id:string)=>{const {error}=await supabase?.rpc("remove_group_member",{p_chat_id:chat.id,p_user_id:id});if(error)setMsg(error.message);else load()};
  const role=async(id:string,r:string)=>{const {error}=await supabase?.rpc("set_group_member_role",{p_chat_id:chat.id,p_user_id:id,p_role:r});if(error)setMsg(error.message);else load()};
  const roleName=(r:string)=>r==="owner"?"Создатель":r==="admin"?"Администратор":r==="moderator"?"Модератор":"Участник";
- return <div className="modal-backdrop" onClick={onClose}><div className="group-modal group-manage" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={onClose}><X/></button><h2>Управление группой</h2><label>Название группы</label><div className="profile-edit-row"><input value={title} onChange={e=>setTitle(e.target.value)} maxLength={80}/><button onClick={saveTitle}>Сохранить</button></div><b>Участники</b>{loading?<small>Загрузка...</small>:<div className="manage-members">{members.map((m:any)=>{const p=m.profiles||{};const owner=m.role==="owner";return <div key={m.user_id}><Avatar p={{id:m.user_id,display_name:p.display_name||"Пользователь",username:p.username||"",avatar_url:p.avatar_url}}/><span><b>{p.display_name||"Пользователь"}</b><small>@{p.username||""}</small></span>{owner?<strong className="role-badge role-owner">Создатель</strong>:<select value={m.role} onChange={e=>role(m.user_id,e.target.value)}><option value="admin">Администратор</option><option value="moderator">Модератор</option><option value="member">Участник</option></select>}{!owner&&<button className="member-remove" onClick={()=>remove(m.user_id)}><X size={16}/></button>}</div>})}</div>}<div className="group-step"><b>Добавить участников</b><small>Показываются только люди из ваших личных чатов</small><div className="group-search"><Search size={16}/><input value={query} onFocus={()=>loadContacts(query)} onChange={e=>loadContacts(e.target.value)} placeholder="Поиск людей"/></div><div className="group-candidates">{candidates.map(p=><button type="button" key={p.id} onClick={()=>add(p.id)}><Avatar p={p}/><span><b>{p.display_name}</b><small>@{p.username}</small></span><Plus size={18}/></button>)}</div></div>{msg&&<small className="group-msg">{msg}</small>}</div></div>
+ return <div className="modal-backdrop" onClick={onClose}><div className="group-modal group-manage" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={onClose}><X/></button><h2>Управление группой</h2><label>Название группы</label><div className="profile-edit-row"><input value={title} onChange={e=>setTitle(e.target.value)} maxLength={80}/><button onClick={saveTitle}>Сохранить</button></div><b>Участники</b>{loading?<small>Загрузка...</small>:<div className="manage-members">{members.map((m:any)=>{const p=m.profiles||{};const owner=m.role==="owner";return <div key={m.user_id}><Avatar p={{id:m.user_id,display_name:p.display_name||"Пользователь",username:p.username||"",avatar_url:p.avatar_url}}/><span><b>{p.display_name||"Пользователь"}</b><small>@{p.username||""}</small></span>{owner?<strong className="role-badge role-owner">Создатель</strong>:<select value={m.role} onChange={e=>role(m.user_id,e.target.value)}><option value="admin">Администратор</option><option value="moderator">Модератор</option><option value="member">Участник</option></select>}{!owner&&<button className="member-remove" onClick={()=>remove(m.user_id)}><X size={16}/></button>}</div>})}</div>}<div className="group-step"><b>Добавить участников</b><small>Показываются только люди из ваших личных чатов</small><div className="group-search"><Search size={16}/><input value={query} onFocus={()=>loadContacts(query)} onChange={e=>loadContacts(e.target.value)} placeholder="Поиск людей"/></div><div className="group-candidates">{candidates.map(p=><button type="button" key={p.id} onClick={()=>add(p.id)}><Avatar p={p}/><span><b>{p.emoji_status ? `${p.emoji_status} ` : ""}{p.display_name}</b><small>@{p.username}</small></span><Plus size={18}/></button>)}</div></div>{msg&&<small className="group-msg">{msg}</small>}</div></div>
 }
 
-function MessageBubble({m,mine,messages,onOpenPhoto,editingId,setEditingId,editingText,setEditingText,saveEdit,deleteMessage,onReply,reactions,toggleReaction,copyText,senderProfile,isGroup}:any){
+
+function PollCreator({onClose,onCreate}:any){
+ const [q,setQ]=useState(""); const [opts,setOpts]=useState(["",""]);
+ return <div className="modal-backdrop" onClick={onClose}><div className="group-modal poll-modal" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={onClose}><X/></button><h2>📊 Новый опрос</h2><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Вопрос" maxLength={180}/>{opts.map((o,i)=><input key={i} value={o} onChange={e=>setOpts(x=>x.map((v,n)=>n===i?e.target.value:v))} placeholder={`Вариант ${i+1}`}/>) }<button className="text-add" onClick={()=>setOpts(x=>x.length<8?[...x,""]:x)}>+ Добавить вариант</button><button className="primary" disabled={!q.trim()||opts.filter(Boolean).length<2} onClick={()=>onCreate(q.trim(),opts)}>Создать опрос</button></div></div>
+}
+
+function PollCard({message}:any){
+ let data:any; try{data=JSON.parse(message.content)}catch{data={question:"Опрос",options:[]}};
+ const [votes,setVotes]=useState<any[]>([]);
+ useEffect(()=>{const load=async()=>{if(!supabase)return;const {data:v}=await supabase.from("poll_votes").select("user_id,option_index").eq("message_id",message.id);setVotes(v||[])};load();window.addEventListener("groza-poll-update",load);return()=>window.removeEventListener("groza-poll-update",load)},[message.id]);
+ const vote=async(i:number)=>{if(!supabase)return;const {data:{user}}=await supabase.auth.getUser();if(!user)return;const {error}=await supabase.from("poll_votes").upsert({message_id:message.id,user_id:user.id,option_index:i},{onConflict:"message_id,user_id"});if(!error){const {data:v}=await supabase.from("poll_votes").select("user_id,option_index").eq("message_id",message.id);setVotes(v||[])}};
+ const total=votes.length;
+ return <div className="poll-card"><b>📊 {data.question}</b><div>{(data.options||[]).map((o:string,i:number)=>{const count=votes.filter(v=>v.option_index===i).length;const pct=total?Math.round(count/total*100):0;return <button className="poll-option" key={i} onClick={()=>vote(i)}><span className="poll-fill" style={{width:`${pct}%`}}/><span className="poll-label">{o}</span><strong>{count||""}</strong></button>})}</div><small>{total} голос{total===1?"":"ов"}</small></div>
+}
+
+function GroupGallery({chat,kind,onClose}:any){
+ const [items,setItems]=useState<any[]>([]); const [loading,setLoading]=useState(true);
+ useEffect(()=>{(async()=>{if(!supabase)return;const {data}=await supabase.from("messages").select("*").eq("chat_id",chat.id).order("created_at",{ascending:false});const all:any[]=data||[];const filtered=all.filter(m=>kind==="фотографий"?(m.message_type==="image"||String(m.media_type||"").startsWith("image/")):kind==="видео"?String(m.media_type||"").startsWith("video/"):kind==="файлов"?m.message_type==="file":kind==="ссылок"?/https?:\/\//i.test(m.content||""):String(m.media_type||"").startsWith("audio/"));setItems(filtered);setLoading(false)})()},[chat.id,kind]);
+ return <div className="modal-backdrop" onClick={onClose}><div className="gallery-modal" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={onClose}><X/></button><h2>{kind}</h2>{loading?<p>Загрузка...</p>:!items.length?<p>Пока ничего нет</p>:<div className="gallery-grid">{items.map(m=>m.message_type==="image"?<img key={m.id} src={m.media_url} alt=""/>:<a key={m.id} href={m.media_url||"#"} target="_blank" rel="noreferrer">{m.content||"Файл"}</a>)}</div>}</div></div>
+}
+
+function MessageBubble({m,mine,messages,onOpenPhoto,editingId,setEditingId,editingText,setEditingText,saveEdit,deleteMessage,onReply,reactions,toggleReaction,copyText,senderProfile,isGroup,togglePin}:any){
  const deleted=!!m.deleted_at; const [menuOpen,setMenuOpen]=useState(false); const holdTimer=useRef<number|null>(null); const reply=messages.find((x:Message)=>x.id===m.reply_to_id);
  const startHold=()=>{if(deleted||editingId===m.id)return; if(holdTimer.current)clearTimeout(holdTimer.current);holdTimer.current=window.setTimeout(()=>{setMenuOpen(true);navigator.vibrate?.(12)},520)};
  const cancelHold=()=>{if(holdTimer.current){clearTimeout(holdTimer.current);holdTimer.current=null}};
  const grouped=reactions.reduce((a:any,r:any)=>{(a[r.emoji]||=[]).push(r);return a},{});
  return <div className={`bubble-row ${mine?"mine":""}`}><div className="bubble-wrap"><div className={`bubble ${deleted?"deleted":""} ${m.message_type==="image"&&!deleted?"photo-bubble":""}`} onPointerDown={startHold} onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold} onContextMenu={e=>{e.preventDefault();setMenuOpen(true)}}>
- {editingId===m.id?<div className="edit-box"><textarea value={editingText} onChange={e=>setEditingText(e.target.value)} autoFocus/><div><button onClick={()=>saveEdit(m.id)}><Check size={15}/>Сохранить</button><button onClick={()=>setEditingId(null)}><X size={15}/>Отмена</button></div></div>:<>{isGroup&&!mine&&<div className="group-message-author"><Avatar p={senderProfile||{id:m.sender_id,display_name:"Пользователь",username:""}}/><b>{senderProfile?.display_name||senderProfile?.username||"Пользователь"}</b></div>}{reply&&<div className="reply-preview"><Reply size={13}/><span><b>{reply.sender_id===m.sender_id?"Сообщение":"Ответ"}</b>{reply.content}</span></div>}{m.message_type==="image"&&m.media_url?<button className="photo-message" onClick={()=>onOpenPhoto(m.media_url)}><img src={m.media_url} alt="Фотография"/></button>:m.message_type==="file"&&m.media_url?<a className="file-message" href={m.media_url} target="_blank" rel="noreferrer">📎 <span>{m.content||"Файл"}</span></a>:m.content}<small>{timeOf(m.created_at)}{m.edited?" · изменено":""}{mine&&<span className="delivery">{m.read_at?<CheckCheck size={14}/>:m.delivered_at?<CheckCheck size={14}/>:<Check size={14}/>}</span>}</small></>}
+ {editingId===m.id?<div className="edit-box"><textarea value={editingText} onChange={e=>setEditingText(e.target.value)} autoFocus/><div><button onClick={()=>saveEdit(m.id)}><Check size={15}/>Сохранить</button><button onClick={()=>setEditingId(null)}><X size={15}/>Отмена</button></div></div>:<>{isGroup&&!mine&&<div className="group-message-author"><Avatar p={senderProfile||{id:m.sender_id,display_name:"Пользователь",username:""}}/><b>{senderProfile?.display_name||senderProfile?.username||"Пользователь"}</b></div>}{reply&&<div className="reply-preview"><Reply size={13}/><span><b>{reply.sender_id===m.sender_id?"Сообщение":"Ответ"}</b>{reply.content}</span></div>}{m.message_type==="poll"?<PollCard message={m}/>:m.message_type==="image"&&m.media_url?<button className="photo-message" onClick={()=>onOpenPhoto(m.media_url)}><img src={m.media_url} alt="Фотография"/></button>:m.message_type==="file"&&m.media_url?<a className="file-message" href={m.media_url} target="_blank" rel="noreferrer">📎 <span>{m.content||"Файл"}</span></a>:m.content}<small>{timeOf(m.created_at)}{m.edited?" · изменено":""}{mine&&<span className="delivery">{m.read_at?<CheckCheck size={14}/>:m.delivered_at?<CheckCheck size={14}/>:<Check size={14}/>}</span>}</small></>}
  </div>{Object.keys(grouped).length>0&&<div className="reaction-row">{Object.entries(grouped).map(([emoji,rs]:any)=><button key={emoji} className={rs.some((r:any)=>r.user_id===m.sender_id)?"reacted":""} onClick={()=>toggleReaction(m.id,emoji)}>{emoji} {rs.length}</button>)}</div>}
- {menuOpen&&!deleted&&<><div className="message-sheet-backdrop" onClick={()=>setMenuOpen(false)}/><div className="message-sheet"><div className="quick-reactions">{["👍","❤️","😂","🔥","😮"].map(e=><button key={e} onClick={()=>{toggleReaction(m.id,e);setMenuOpen(false)}}>{e}</button>)}</div><button onClick={()=>{onReply(m);setMenuOpen(false)}}><Reply size={19}/>Ответить</button>{m.message_type!=="image"&&<button onClick={()=>{copyText(m.content);setMenuOpen(false)}}><Copy size={19}/>Копировать</button>}{mine&&m.message_type!=="image"&&<button onClick={()=>{setEditingId(m.id);setEditingText(m.content);setMenuOpen(false)}}><Pencil size={19}/>Редактировать</button>}{mine&&<button className="danger" onClick={()=>{deleteMessage(m.id);setMenuOpen(false)}}><Trash2 size={19}/>Удалить</button>}<button className="cancel" onClick={()=>setMenuOpen(false)}>Отмена</button></div></>}</div></div>
+ {menuOpen&&!deleted&&<><div className="message-sheet-backdrop" onClick={()=>setMenuOpen(false)}/><div className="message-sheet"><div className="quick-reactions">{["👍","❤️","😂","🔥","😮"].map(e=><button key={e} onClick={()=>{toggleReaction(m.id,e);setMenuOpen(false)}}>{e}</button>)}</div><button onClick={()=>{onReply(m);setMenuOpen(false)}}><Reply size={19}/>Ответить</button><button onClick={()=>{togglePin(m);setMenuOpen(false)}}>📌 Закрепить</button>{m.message_type!=="image"&&<button onClick={()=>{copyText(m.content);setMenuOpen(false)}}><Copy size={19}/>Копировать</button>}{mine&&m.message_type!=="image"&&<button onClick={()=>{setEditingId(m.id);setEditingText(m.content);setMenuOpen(false)}}><Pencil size={19}/>Редактировать</button>}{mine&&<button className="danger" onClick={()=>{deleteMessage(m.id);setMenuOpen(false)}}><Trash2 size={19}/>Удалить</button>}<button className="cancel" onClick={()=>setMenuOpen(false)}>Отмена</button></div></>}</div></div>
 }
 
 type SettingsPanelProps = { dark:boolean; setDark:(value:boolean)=>void; notifications:boolean; requestNotifications:()=>void; setNotifications:(value:boolean)=>void; installEvent:any; logout:()=>void; userId:string; };
 function SettingsPanel({dark,setDark,notifications,requestNotifications,setNotifications,installEvent,logout,userId}:SettingsPanelProps){
- const [profile,setProfile]=useState<Profile|null>(null); const [displayName,setDisplayName]=useState(""); const [username,setUsername]=useState(""); const [bio,setBio]=useState(""); const [theme,setTheme]=useState(localStorage.getItem("groza-theme")||"dark"); const [privacy,setPrivacy]=useState({allow_messages:"everyone",show_online:true,show_last_seen:true}); const [blocked,setBlocked]=useState<Profile[]>([]); const [saving,setSaving]=useState(false); const [profileError,setProfileError]=useState("");
- const load=async()=>{if(!supabase)return; const {data}=await supabase.from("profiles").select("id,username,display_name,avatar_url,bio,online,last_seen").eq("id",userId).single();if(data){setProfile(data);setDisplayName(data.display_name||"");setUsername(data.username||"");setBio(data.bio||"")} const {data:pr}=await supabase.from("privacy_settings").select("allow_messages,show_online,show_last_seen").eq("user_id",userId).single();if(pr)setPrivacy(pr); const {data:bs}=await supabase.from("blocked_users").select("blocked_id").eq("blocker_id",userId);if(bs?.length){const ids=bs.map((x:any)=>x.blocked_id);const {data:pp}=await supabase.from("profiles").select("id,username,display_name,avatar_url,online,last_seen").in("id",ids);setBlocked(pp||[])}};
+ const [profile,setProfile]=useState<Profile|null>(null); const [displayName,setDisplayName]=useState(""); const [username,setUsername]=useState(""); const [bio,setBio]=useState(""); const [theme,setTheme]=useState(localStorage.getItem("groza-theme")||"dark"); const [privacy,setPrivacy]=useState({allow_messages:"everyone",show_online:true,show_last_seen:true}); const [blocked,setBlocked]=useState<Profile[]>([]); const [saving,setSaving]=useState(false); const [profileError,setProfileError]=useState(""); const [emojiStatus,setEmojiStatus]=useState(""); const [chatBg,setChatBg]=useState(localStorage.getItem("groza-chat-bg")||"default"); const [bubbleColor,setBubbleColor]=useState(localStorage.getItem("groza-bubble-color")||"violet");
+ const load=async()=>{if(!supabase)return; const {data}=await supabase.from("profiles").select("id,username,display_name,avatar_url,bio,emoji_status,online,last_seen").eq("id",userId).single();if(data){setProfile(data);setDisplayName(data.display_name||"");setUsername(data.username||"");setBio(data.bio||"");setEmojiStatus(data.emoji_status||"")} const {data:pr}=await supabase.from("privacy_settings").select("allow_messages,show_online,show_last_seen").eq("user_id",userId).single();if(pr)setPrivacy(pr); const {data:bs}=await supabase.from("blocked_users").select("blocked_id").eq("blocker_id",userId);if(bs?.length){const ids=bs.map((x:any)=>x.blocked_id);const {data:pp}=await supabase.from("profiles").select("id,username,display_name,avatar_url,emoji_status,online,last_seen").in("id",ids);setBlocked(pp||[])}};
  useEffect(()=>{load()},[userId]);
  const applyTheme=(t:string)=>{setTheme(t);localStorage.setItem("groza-theme",t);document.documentElement.dataset.theme=t;setDark(t!=="light")};
- const saveProfile=async()=>{if(!supabase)return;const u=username.trim().replace(/^@/,"").toLowerCase();if(!/^[a-z0-9_]{3,32}$/.test(u)){setProfileError("Username: 3–32 символа, только латиница, цифры и _");return}setSaving(true);setProfileError("");const {error}=await supabase.from("profiles").update({display_name:displayName.trim(),username:u,bio:bio.trim()||null}).eq("id",userId);setSaving(false);if(error)setProfileError(error.message);else load()};
+ const saveProfile=async()=>{if(!supabase)return;const u=username.trim().replace(/^@/,"").toLowerCase();if(!/^[a-z0-9_]{3,32}$/.test(u)){setProfileError("Username: 3–32 символа, только латиница, цифры и _");return}setSaving(true);setProfileError("");const {error}=await supabase.from("profiles").update({display_name:displayName.trim(),username:u,bio:bio.trim()||null,emoji_status:emojiStatus.trim()||null}).eq("id",userId);setSaving(false);if(error)setProfileError(error.message);else load()};
  const savePrivacy=async(p:any)=>{setPrivacy(p);await supabase?.from("privacy_settings").upsert({user_id:userId,...p},{onConflict:"user_id"})};
  const unblock=async(id:string)=>{await supabase?.from("blocked_users").delete().eq("blocker_id",userId).eq("blocked_id",id);setBlocked(x=>x.filter(p=>p.id!==id))};
  return <div className="settings-panel"><div className="settings-title">Настройки</div>
- <div className="profile-card"><div className="profile-card-title"><UserRoundPen size={18}/>Ваш профиль</div><label>Имя</label><input value={displayName} onChange={e=>setDisplayName(e.target.value)} maxLength={80}/><label>Username</label><input value={username} onChange={e=>setUsername(e.target.value.replace(/\s/g,""))} maxLength={32}/><label>О себе</label><input value={bio} onChange={e=>setBio(e.target.value)} maxLength={160}/><button className="profile-save" onClick={saveProfile} disabled={saving}>{saving?"Сохраняем...":"Сохранить профиль"}</button>{profileError&&<div className="profile-error">{profileError}</div>}</div>
+ <div className="profile-card"><div className="profile-card-title"><UserRoundPen size={18}/>Ваш профиль</div><label>Имя</label><input value={displayName} onChange={e=>setDisplayName(e.target.value)} maxLength={80}/><label>Username</label><input value={username} onChange={e=>setUsername(e.target.value.replace(/\s/g,""))} maxLength={32}/><label>Эмодзи-статус</label><input value={emojiStatus} onChange={e=>setEmojiStatus(e.target.value.slice(0,8))} placeholder="Например: ⚡🔥🎮" maxLength={8}/><label>О себе</label><input value={bio} onChange={e=>setBio(e.target.value)} maxLength={160}/><button className="profile-save" onClick={saveProfile} disabled={saving}>{saving?"Сохраняем...":"Сохранить профиль"}</button>{profileError&&<div className="profile-error">{profileError}</div>}</div>
+ <div className="settings-subtitle"><Palette size={17}/>Оформление чата</div><div className="appearance-card"><label>Фон чата</label><div className="appearance-grid">{[["default","Стандарт"],["dots","Точки"],["stars","Звёзды"],["waves","Волны"]].map(([id,l])=><button className={chatBg===id?"theme-active":""} key={id} onClick={()=>{setChatBg(id);localStorage.setItem("groza-chat-bg",id);document.documentElement.dataset.chatBg=id}}>{l}</button>)}</div><label>Цвет моих сообщений</label><div className="appearance-grid">{[["violet","Фиолетовый"],["blue","Синий"],["green","Зелёный"],["rose","Розовый"]].map(([id,l])=><button className={bubbleColor===id?"theme-active":""} key={id} onClick={()=>{setBubbleColor(id);localStorage.setItem("groza-bubble-color",id);document.documentElement.dataset.bubbleColor=id}}>{l}</button>)}</div></div>
  <div className="settings-subtitle"><Palette size={17}/>Темы оформления</div><div className="theme-grid">{[["dark","🌙 Тёмная"],["light","☀️ Светлая"],["purple","🟣 Фиолетовая"],["blue","🔵 Синяя"],["midnight","🌌 Полночь"],["emerald","💚 Изумрудная"],["sunset","🌅 Закат"],["rose","🌸 Розовая"],["ocean","🌊 Океан"],["coffee","☕ Кофейная"],["graphite","🪨 Графит"],["aurora","✨ Аврора"]].map(([id,label])=><button key={id} className={theme===id?"theme-active":""} onClick={()=>applyTheme(id)}>{label}</button>)}</div>
  <div className="settings-subtitle"><Lock size={17}/>Приватность</div><div className="privacy-card"><label>Кто может писать мне</label><select value={privacy.allow_messages} onChange={e=>savePrivacy({...privacy,allow_messages:e.target.value})}><option value="everyone">Все</option><option value="contacts">Только существующие чаты</option><option value="nobody">Никто</option></select><button className={`privacy-switch ${privacy.show_online?"on":""}`} onClick={()=>savePrivacy({...privacy,show_online:!privacy.show_online})}>Показывать «В сети»</button><button className={`privacy-switch ${privacy.show_last_seen?"on":""}`} onClick={()=>savePrivacy({...privacy,show_last_seen:!privacy.show_last_seen})}>Показывать время посещения</button></div>
- <div className="settings-subtitle"><Ban size={17}/>Чёрный список</div><div className="blocked-list">{blocked.length?blocked.map(p=><div className="blocked-user" key={p.id}><Avatar p={p}/><span><b>{p.display_name}</b><small>@{p.username}</small></span><button onClick={()=>unblock(p.id)}>Разблокировать</button></div>):<div className="empty-small">Заблокированных пользователей нет</div>}</div>
+ <div className="settings-subtitle"><Ban size={17}/>Чёрный список</div><div className="blocked-list">{blocked.length?blocked.map(p=><div className="blocked-user" key={p.id}><Avatar p={p}/><span><b>{p.emoji_status ? `${p.emoji_status} ` : ""}{p.display_name}</b><small>@{p.username}</small></span><button onClick={()=>unblock(p.id)}>Разблокировать</button></div>):<div className="empty-small">Заблокированных пользователей нет</div>}</div>
  <div className="setting"><span>{notifications?<Bell size={17}/>:<BellOff size={17}/>}Уведомления</span><button className={`switch ${notifications?"on":""}`} onClick={()=>notifications?setNotifications(false):requestNotifications()}><i/></button></div>{installEvent&&<button className="install-btn" onClick={async()=>{installEvent.prompt();await installEvent.userChoice}}><Download size={17}/>Установить ГРОЗА</button>}<button className="logout" onClick={logout}><LogOut/>Выйти</button></div>
 }
 
