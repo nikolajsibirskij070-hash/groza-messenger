@@ -356,3 +356,98 @@ html,body,#root{width:100%;height:100%;min-height:100%;margin:0;overflow:hidden}
 /* v21 — compact create button in the top-right corner */
 .create-menu-wrap{position:relative;margin-left:auto;display:flex;align-items:center;z-index:20}.create-plus{width:42px;height:42px;border:1px solid var(--line);border-radius:14px;background:var(--panel2);color:var(--text);display:grid;place-items:center;padding:0;box-shadow:0 6px 20px #0002}.create-plus:hover{background:var(--hover)}.create-menu{position:absolute;right:0;top:50px;width:190px;padding:6px;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 14px 40px #0007;display:grid;gap:3px}.create-menu button{border:0;background:transparent;color:var(--text);padding:12px 13px;border-radius:10px;display:flex;align-items:center;gap:10px;text-align:left}.create-menu button:hover{background:var(--hover)}
 @media(max-width:760px){.connection{display:none!important}.brand{padding-bottom:10px!important}.create-plus{width:48px!important;height:48px!important;border-radius:16px!important}.create-menu{top:56px;right:0;width:200px}.new-chat-actions{display:none!important}.sidebar{padding-bottom:env(safe-area-inset-bottom)!important}.side-list{padding-bottom:8px!important}}
+
+/* =========================================================
+   v22 — Smooth mobile messenger redesign inspired by the video
+   Visual overhaul only: Supabase, chats, groups and Push logic stay intact.
+   ========================================================= */
+:root{
+  --bg:#0f1117;
+  --panel:#151820;
+  --panel2:#1b1f28;
+  --line:rgba(255,255,255,.075);
+  --text:#f4f6fb;
+  --muted:#8e95a5;
+  --accent:#f1f3f7;
+  --accentText:#12151c;
+  --hover:#222733;
+  --mine:#5f57c8;
+}
+*{-webkit-tap-highlight-color:transparent}
+button,input,textarea{transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease,box-shadow .18s ease}
+button:active{transform:scale(.97)}
+.app{background:radial-gradient(900px 700px at 0% -10%,rgba(94,83,194,.09),transparent 55%),var(--bg)}
+.sidebar{background:linear-gradient(180deg,rgba(22,25,33,.98),rgba(15,17,23,.98));border-right:1px solid var(--line)}
+.brand{min-height:58px;padding:6px 5px 14px}
+.brand b{font-size:22px;letter-spacing:.11em;font-weight:850}
+.brand span{font-size:12px;letter-spacing:.02em}
+.logo{width:46px;height:46px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.version-tag{font-style:normal;font-size:10px;letter-spacing:0;background:var(--panel2);color:var(--muted);padding:4px 7px;border-radius:8px;vertical-align:middle;margin-left:4px}
+.search{height:46px;border-radius:15px;background:rgba(255,255,255,.025);border-color:rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+.search:focus-within{border-color:rgba(142,125,255,.52);box-shadow:0 0 0 3px rgba(117,100,240,.09)}
+nav{margin:14px 0 12px;gap:5px}
+nav button{flex:1;justify-content:center;padding:11px 8px;border-radius:13px;font-size:13px}
+nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(95,86,190,.12));box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.side-list{padding:2px 0 12px;scrollbar-width:none}
+.side-list::-webkit-scrollbar{display:none}
+.person{padding:11px 10px;border-radius:16px;margin:2px 0;min-height:70px}
+.person:hover,.chat-selected{background:linear-gradient(135deg,rgba(255,255,255,.055),rgba(255,255,255,.018))!important}
+.person b{font-size:15px;font-weight:720;letter-spacing:.01em}
+.person small{font-size:12px}
+.avatar{width:48px;height:48px;flex-basis:48px;box-shadow:0 7px 18px rgba(0,0,0,.16)}
+.status-dot{border-color:var(--panel);width:12px;height:12px}
+.row-time{font-size:11px!important;align-self:flex-start;margin-top:4px!important}
+.unread-badge{background:#7669e8;color:white;box-shadow:0 5px 14px rgba(118,105,232,.3)}
+.create-plus{width:42px;height:42px;border-radius:15px;background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.09);box-shadow:none}
+.create-plus:hover{background:rgba(122,108,235,.2);border-color:rgba(145,133,255,.35)}
+.create-menu{border-radius:18px;padding:7px;background:rgba(27,31,40,.98);backdrop-filter:blur(18px);border-color:rgba(255,255,255,.1);transform-origin:top right;animation:grozaMenu .18s cubic-bezier(.2,.8,.2,1)}
+.create-menu button{border-radius:12px;font-weight:650}
+@keyframes grozaMenu{from{opacity:0;transform:translateY(-6px) scale(.97)}to{opacity:1;transform:none}}
+.main{background:radial-gradient(900px 700px at 100% 0%,rgba(112,95,220,.055),transparent 55%),var(--bg)}
+.welcome{animation:grozaFade .45s ease both}.welcome-logo{border-radius:24px;box-shadow:0 18px 55px rgba(0,0,0,.28)}
+.chat{background:radial-gradient(800px 500px at 80% 0%,rgba(115,95,215,.045),transparent 60%),var(--bg)}
+.chat-head{background:rgba(21,24,32,.82);backdrop-filter:blur(18px);border-bottom-color:rgba(255,255,255,.055)}
+.chat-title b{font-weight:750}.chat-title small{font-size:11px}
+.icon-btn{border-radius:13px}.icon-btn:hover{background:rgba(255,255,255,.055)}
+.messages{gap:10px}
+.bubble-row{animation:grozaMessage .26s cubic-bezier(.2,.75,.2,1) both}
+.bubble{background:#1a1e27;border-color:rgba(255,255,255,.06);box-shadow:0 7px 22px rgba(0,0,0,.08);border-radius:18px 18px 18px 7px}
+.bubble.mine{background:linear-gradient(135deg,#7469e8,#5c54c8)!important;box-shadow:0 9px 28px rgba(92,84,200,.18);border-radius:18px 18px 7px 18px}
+.composer{background:rgba(27,31,40,.94);backdrop-filter:blur(18px);border-color:rgba(255,255,255,.08);box-shadow:0 14px 42px rgba(0,0,0,.2);border-radius:20px}
+.send{border-radius:14px;background:linear-gradient(135deg,#8577f0,#665bd6);color:white;box-shadow:0 8px 20px rgba(102,91,214,.28)}
+.send:hover{filter:brightness(1.08)}
+.message-sheet{background:rgba(27,31,40,.98);backdrop-filter:blur(22px);border-color:rgba(255,255,255,.09);animation:grozaSheet .22s cubic-bezier(.2,.8,.2,1)}
+@keyframes grozaMessage{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes grozaSheet{from{opacity:0;transform:translateX(-50%) translateY(14px) scale(.98)}to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
+@keyframes grozaFade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.group-modal,.profile-card,.privacy-card,.blocked-list{box-shadow:0 20px 60px rgba(0,0,0,.18)}
+
+/* Phone layout: compact header + smooth app-like spacing. */
+@media(max-width:760px){
+  .sidebar{padding:calc(12px + env(safe-area-inset-top)) 14px max(8px,env(safe-area-inset-bottom))!important;background:linear-gradient(180deg,#151820,#101218)!important}
+  .brand{padding:2px 4px 12px!important;min-height:58px}
+  .brand b{font-size:20px}.brand span{font-size:11px}.logo{width:44px;height:44px;border-radius:15px}
+  .create-menu-wrap{z-index:60}.create-plus{width:44px!important;height:44px!important;border-radius:15px!important}
+  .search{height:48px!important;border-radius:16px!important;margin-bottom:2px}
+  nav{position:sticky;top:0;z-index:5;margin:11px 0 10px!important;padding:2px 0;background:transparent}
+  nav button{min-height:48px;padding:8px 5px!important;border-radius:14px;font-size:14px!important}
+  nav button svg{width:20px;height:20px}
+  .side-list{padding-bottom:10px!important}
+  .person{min-height:76px!important;padding:11px 10px!important;border-radius:17px!important;margin:3px 0!important}
+  .avatar{width:52px;height:52px;flex-basis:52px}
+  .person b{font-size:16px}.person small{font-size:12px;margin-top:3px}
+  .row-time{font-size:11px!important;margin-right:3px}
+  .create-menu{position:fixed!important;right:14px!important;top:calc(70px + env(safe-area-inset-top))!important;width:min(230px,calc(100vw - 28px))!important;border-radius:19px!important;box-shadow:0 24px 70px rgba(0,0,0,.48)!important}
+  .create-menu button{min-height:52px;font-size:15px}
+  .chat-head{background:rgba(18,20,27,.88)!important;backdrop-filter:blur(20px)}
+  .messages{padding:14px 12px!important;gap:10px!important}
+  .bubble-wrap{max-width:84%!important}
+  .bubble{font-size:15px;padding:10px 13px}
+  .composer{background:rgba(28,32,42,.96)!important;border-color:rgba(255,255,255,.08)!important}
+}
+
+@media(min-width:761px){
+  .sidebar{width:370px;padding:18px}
+  .chat-head{padding-left:28px;padding-right:28px}
+  .messages{padding-left:8%;padding-right:8%}
+}
