@@ -509,3 +509,20 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
 
 /* v31: clear unpin control for pinned messages */
 .pinned-unpin{margin-left:auto;border:0;background:transparent;color:var(--muted,#9aa0ad);font-size:20px;line-height:1;padding:8px;cursor:pointer;border-radius:10px}.pinned-unpin:hover{background:rgba(255,255,255,.08);color:inherit}.message-sheet button{transition:transform .16s ease,background .16s ease}.message-sheet button:active{transform:scale(.98)}
+/* v32 — message search and per-chat mute */
+.message-search-bar{display:flex;align-items:center;gap:9px;padding:9px 14px;background:var(--panel);border-bottom:1px solid var(--line);animation:slideDown .2s ease;position:relative;z-index:20}.message-search-bar input{flex:1;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:12px;padding:10px 12px;outline:none}.message-search-bar button{border:0;background:transparent;color:var(--muted);padding:8px;border-radius:10px}.message-search-bar button:hover{background:var(--hover);color:var(--text)}
+
+/* v33: disable native phone text selection on long-press messages.
+   Copying is still available from the GROZA message menu. */
+.bubble,
+.bubble *,
+.bubble-row,
+.bubble-wrap{
+  -webkit-user-select:none !important;
+  user-select:none !important;
+  -webkit-touch-callout:none !important;
+  touch-action:manipulation;
+}
+.bubble{
+  -webkit-tap-highlight-color:transparent;
+}
