@@ -113,7 +113,7 @@ export default function App() {
 
   useEffect(() => {
     selectedChatIdRef.current = selected?.id ?? null;
-    if (selected) { loadMessages(selected.id); loadReactions(selected.id); markRead(); }
+    if (selected) { loadMessages(selected.id); loadReactions(selected.id); markRead(selected.id); }
   }, [selected?.id]);
 
   useEffect(() => {
@@ -136,6 +136,11 @@ export default function App() {
         if (payload.eventType === "INSERT") {
           setMessages(prev => selectedChatIdRef.current === row.chat_id && !prev.some(m => m.id === row.id) ? [...prev, row] : prev);
           updateChatPreview(row.chat_id, previewOf(row), row.created_at);
+          // If the recipient is already looking at this chat, mark the new message read immediately.
+          // Without this, read_at stayed NULL until the user left and reopened the chat.
+          if (row.sender_id !== userId && selectedChatIdRef.current === row.chat_id) {
+            await markRead(row.chat_id);
+          }
           if (row.sender_id !== userId && selectedChatIdRef.current !== row.chat_id) {
             setChats(prev => prev.map(c => c.id === row.chat_id ? { ...c, unread: (c.unread || 0) + 1 } : c));
             if (notifications) notifyNewMessage(row);
@@ -414,10 +419,12 @@ export default function App() {
     const chat: Chat = { id: chatId, name: p.display_name || p.username, username: p.username, avatar_url: p.avatar_url, otherId: p.id, other: p, last: "Сообщений пока нет" };
     chatIdsRef.current.add(chat.id); setChats(prev => [chat, ...prev.filter(c => c.id !== chat.id)]); setSelected(chat); setSection("chats"); await loadChats();
   }
-  async function markRead() {
-    if (!supabase || !selected || !session?.user?.id) return;
-    const now = new Date().toISOString();
-    await supabase.rpc("mark_chat_read", { p_chat_id: selected.id });
+  async function markRead(chatId?: string) {
+    if (!supabase || !session?.user?.id) return;
+    const id = chatId || selectedChatIdRef.current;
+    if (!id) return;
+    const { error } = await supabase.rpc("mark_chat_read", { p_chat_id: id });
+    if (error) console.warn("Не удалось отметить сообщения прочитанными:", error.message);
   }
 
   async function loadReactions(chatId: string) {
