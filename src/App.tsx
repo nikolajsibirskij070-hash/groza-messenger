@@ -210,29 +210,55 @@ export default function App() {
     };
   }, [session?.user?.id, notifications]);
 
+  // Restore the real Push subscription after every app update/reload when permission
+  // has already been granted. This is what allows Push to work while the PWA is closed.
+  useEffect(() => {
+    if (!session?.user?.id || Notification.permission !== "granted") return;
+    savePushSubscription().catch(err => console.warn("Push subscription refresh failed", err));
+  }, [session?.user?.id]);
+
   async function savePushSubscription() {
     if (!supabase || !session?.user?.id || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
     const publicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
     if (!publicKey) throw new Error("Не настроен VITE_VAPID_PUBLIC_KEY");
+
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
+
     if (!subscription) {
       const padding = "=".repeat((4 - publicKey.length % 4) % 4);
       const base64 = (publicKey + padding).replace(/-/g, "+").replace(/_/g, "/");
       const raw = atob(base64);
       const key = new Uint8Array([...raw].map(c => c.charCodeAt(0)));
-      subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: key
+      });
     }
+
     const json = subscription.toJSON();
-    const { error: pushError } = await supabase.from("push_subscriptions").upsert({
-      user_id: session.user.id,
-      endpoint: subscription.endpoint,
-      p256dh: json.keys?.p256dh || "",
-      auth: json.keys?.auth || "",
-      subscription: json,
-      updated_at: new Date().toISOString()
-    }, { onConflict: "endpoint" });
-    if (pushError) throw pushError;
+
+    // One active subscription per account in this app.
+    // Delete the old row first instead of relying on a partial-index upsert conflict.
+    const { error: deleteError } = await supabase
+      .from("push_subscriptions")
+      .delete()
+      .eq("user_id", session.user.id);
+
+    if (deleteError) throw deleteError;
+
+    const { error: insertError } = await supabase
+      .from("push_subscriptions")
+      .insert({
+        user_id: session.user.id,
+        endpoint: subscription.endpoint,
+        p256dh: json.keys?.p256dh || "",
+        auth: json.keys?.auth || "",
+        subscription: json,
+        updated_at: new Date().toISOString()
+      });
+
+    if (insertError) throw insertError;
   }
 
   async function notifyNewMessage(m: Message) {

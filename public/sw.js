@@ -1,4 +1,4 @@
-const CACHE = "groza-v17";
+const CACHE = "groza-v44";
 self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
 self.addEventListener("push", event => {
