@@ -817,7 +817,7 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
       recordStreamRef.current = stream;
       const supports=(type:string)=>typeof MediaRecorder.isTypeSupported==="function"&&MediaRecorder.isTypeSupported(type);
       const preferred=["audio/mp4;codecs=mp4a.40.2","audio/mp4","audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus"].find(supports);
-      const options:MediaRecorderOptions={audioBitsPerSecond:128000}; if(preferred) options.mimeType=preferred;
+      const options:MediaRecorderOptions={audioBitsPerSecond:192000}; if(preferred) options.mimeType=preferred;
       const rec=new MediaRecorder(stream,options);
       recordChunksRef.current=[]; recordStartedRef.current=Date.now(); setRecordSeconds(0); setRecordLocked(false);
       rec.ondataavailable=(e)=>{if(e.data.size)recordChunksRef.current.push(e.data)};
@@ -958,7 +958,7 @@ function VoiceMessage({src,label}:any){
  return <div className="voice-message compact-voice" onPointerDown={e=>e.stopPropagation()}>
    <audio ref={audioRef} src={src} preload="metadata" onLoadedMetadata={e=>setDuration(Number.isFinite(e.currentTarget.duration)?e.currentTarget.duration:0)} onTimeUpdate={e=>setCurrent(e.currentTarget.currentTime)} onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)} onEnded={()=>{setPlaying(false);setCurrent(0)}}/>
    <button className="voice-bubble-play" onClick={toggle} aria-label={playing?"Пауза":"Слушать"}>{playing?<Pause size={18} fill="currentColor"/>:<Play size={19} fill="currentColor"/>}</button>
-   <div className="voice-bubble-main"><div className="voice-bars">{Array.from({length:22}).map((_,i)=><i key={i} style={{height:`${7+((i*13)%15)}px`}}/>)}</div><div className="voice-bubble-meta"><b>{fmt(current)}</b><span>•</span><em>{fmt(total)}</em></div></div>
+   <div className="voice-bubble-main"><div className="voice-bars">{Array.from({length:22}).map((_,i)=><i key={i} style={{height:`${7+((i*13)%15)}px`}}/>)}</div><div className="voice-bubble-meta">{playing ? <b>{fmt(Math.max(0,total-current))}</b> : <b>{fmt(total)}</b>}</div></div>
    <Mic size={16} className="voice-bubble-mic"/>
  </div>
 }

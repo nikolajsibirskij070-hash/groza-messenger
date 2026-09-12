@@ -639,3 +639,10 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
   .voice-message.compact-voice{width:min(310px,78vw)!important;height:60px!important;padding:8px 10px!important}
   .voice-message.compact-voice .voice-bubble-play{width:40px!important;height:40px!important;min-width:40px!important}
 }
+
+
+/* v41 — точное время и компактный фирменный плеер */
+.voice-message.compact-voice .voice-bubble-meta{min-height:14px!important;display:flex!important;align-items:center!important;white-space:nowrap!important;font-variant-numeric:tabular-nums!important}
+.voice-message.compact-voice .voice-bubble-meta b{display:block!important;min-width:40px!important;line-height:14px!important;letter-spacing:.2px!important}
+.voice-message.compact-voice .voice-bars{position:relative!important}
+.voice-message.compact-voice .voice-bubble-main{justify-content:center!important}
