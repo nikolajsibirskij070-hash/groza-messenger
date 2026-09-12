@@ -260,7 +260,7 @@ export default function App() {
     return () => { clearInterval(heartbeat); document.removeEventListener("visibilitychange", away); };
   }, [session?.user?.id]);
 
-  function previewOf(m: Partial<Message>) { return m.message_type === "image" ? "📷 Фото" : m.message_type === "file" ? `📎 ${m.content || "Файл"}` : (m.content || "Сообщений пока нет"); }
+  function previewOf(m: Partial<Message>) { return m.message_type === "image" ? "📷 Фото" : String(m.media_type || "").startsWith("audio/") ? "🎤 Голосовое сообщение" : m.message_type === "file" ? `📎 ${m.content || "Файл"}` : (m.content || "Сообщений пока нет"); }
 
   function updateChatPreview(chatId: string, last: string, at: string) {
     setChats(prev => {
@@ -587,6 +587,27 @@ export default function App() {
     finally { setUploadingFile(false); }
   }
 
+  async function sendVoice(blob: Blob, durationSec: number) {
+    if (!selected || !supabase || !session?.user?.id) return;
+    try {
+      const mime = blob.type || "audio/webm";
+      const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
+      const uuid = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const path = `${selected.id}/${session.user.id}/voice/${uuid}.${ext}`;
+      const { error: uploadError } = await supabase.storage.from("chat-media").upload(path, blob, { contentType: mime, upsert:false });
+      if (uploadError) throw uploadError;
+      const { data: publicUrl } = supabase.storage.from("chat-media").getPublicUrl(path);
+      const label = `🎤 Голосовое сообщение · ${Math.max(1, Math.round(durationSec))} сек.`;
+      // Используем существующий тип file, чтобы не требовать изменения CHECK constraint в БД.
+      const { data, error: messageError } = await supabase.from("messages").insert({
+        chat_id:selected.id, sender_id:session.user.id, content:label, message_type:"file",
+        media_url:publicUrl.publicUrl, media_type:mime
+      }).select().single();
+      if (messageError) throw messageError;
+      if (data) { const m=data as Message; setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]); updateChatPreview(m.chat_id, "🎤 Голосовое сообщение", m.created_at); await sendPush(m.chat_id,m); }
+    } catch(e:any) { console.error("VOICE:",e); setError(`Не удалось отправить голосовое: ${e?.message || "неизвестная ошибка"}`); }
+  }
+
   async function loadGroupCandidates(query = groupMemberQuery) {
     if (!supabase || !session?.user?.id) return;
     // Only people with whom the current account already has a direct chat.
@@ -682,7 +703,7 @@ export default function App() {
 
     </aside>
     <main className="main">
-      {selected ? <ChatView selected={selected} messages={messages} text={text} setText={setText} send={send} back={() => { setSelected(null); setMessages([]); setReplyTo(null); }} sessionId={session.user.id} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} sendPhoto={sendPhoto} sendFile={sendFile} uploadingFile={uploadingFile} deleteChat={deleteCurrentChat} blockUser={blockCurrentUser} uploadingPhoto={uploadingPhoto} onOpenPhoto={setPhotoViewer} replyTo={replyTo} setReplyTo={setReplyTo} reactions={reactions} toggleReaction={toggleReaction} copyText={copyText} sendTyping={sendTyping} otherTyping={otherTyping} senderProfiles={senderProfiles} pinned={pinned} pinnedIds={new Set(pinned.map(p=>p.id))} togglePin={togglePin} createPoll={createPoll} /> : <Welcome onPeople={() => { setSection("people"); setPeople([]); setPeopleQuery(""); setPeopleSearched(false); }} />}
+      {selected ? <ChatView selected={selected} messages={messages} text={text} setText={setText} send={send} back={() => { setSelected(null); setMessages([]); setReplyTo(null); }} sessionId={session.user.id} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} sendPhoto={sendPhoto} sendFile={sendFile} uploadingFile={uploadingFile} deleteChat={deleteCurrentChat} blockUser={blockCurrentUser} uploadingPhoto={uploadingPhoto} onOpenPhoto={setPhotoViewer} replyTo={replyTo} setReplyTo={setReplyTo} reactions={reactions} toggleReaction={toggleReaction} copyText={copyText} sendTyping={sendTyping} otherTyping={otherTyping} senderProfiles={senderProfiles} pinned={pinned} pinnedIds={new Set(pinned.map(p=>p.id))} togglePin={togglePin} createPoll={createPoll} sendVoice={sendVoice} /> : <Welcome onPeople={() => { setSection("people"); setPeople([]); setPeopleQuery(""); setPeopleSearched(false); }} />}
     </main>
     {photoViewer && <div className="photo-viewer" role="dialog" aria-modal="true" onClick={() => setPhotoViewer(null)}><button className="photo-viewer-close" onClick={() => setPhotoViewer(null)} aria-label="Закрыть"><X/></button><img src={photoViewer} alt="Фотография" onClick={e => e.stopPropagation()}/></div>}
     {groupCreatorOpen && <div className="modal-backdrop" onClick={()=>setGroupCreatorOpen(false)}><div className="group-modal" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={()=>setGroupCreatorOpen(false)}><X/></button><h2>Новая группа</h2><input value={groupName} onChange={e=>setGroupName(e.target.value)} placeholder="Название группы" maxLength={80}/><label className="group-avatar-picker">🖼️ Аватар группы<input type="file" accept="image/*" onChange={e=>setGroupAvatar(e.target.files?.[0]||null)}/></label><div className="group-step"><b>Участники</b><small>Выберите людей, которых хотите добавить в группу</small><div className="group-search"><Search size={16}/><input value={groupMemberQuery} onChange={e=>{setGroupMemberQuery(e.target.value);loadGroupCandidates(e.target.value)}} placeholder="Поиск участников"/></div><div className="group-picked">{groupMemberIds.length ? `Выбрано: ${groupMemberIds.length}` : "Пока никто не выбран"}</div><div className="group-candidates">{groupCandidates.map(p=>{const on=groupMemberIds.includes(p.id);return <button type="button" className={on?"chosen":""} key={p.id} onClick={()=>setGroupMemberIds(prev=>on?prev.filter(id=>id!==p.id):[...prev,p.id])}><Avatar p={p}/><span><b>{p.display_name}</b><small>@{p.username}</small></span>{on?<Check size={18}/>:<Plus size={18}/>}</button>})}</div></div><button className="primary" onClick={createGroup}>Создать группу</button></div></div>}
@@ -703,7 +724,7 @@ function Welcome({ onPeople }: { onPeople: () => void }) {
   return <div className="welcome"><div className="welcome-logo">ϟ</div><h2>Добро пожаловать в ГРОЗА</h2><p>Личные сообщения в реальном времени.</p><button className="primary compact" onClick={onPeople}><Users size={18}/>Найти людей</button></div>;
 }
 
-function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile, uploadingPhoto, uploadingFile, onOpenPhoto, back, sessionId, editingId, setEditingId, editingText, setEditingText, saveEdit, deleteMessage, deleteChat, blockUser, replyTo, setReplyTo, reactions, toggleReaction, copyText, sendTyping, otherTyping, senderProfiles, pinned, pinnedIds, togglePin, createPoll }: any) {
+function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile, uploadingPhoto, uploadingFile, onOpenPhoto, back, sessionId, editingId, setEditingId, editingText, setEditingText, saveEdit, deleteMessage, deleteChat, blockUser, replyTo, setReplyTo, reactions, toggleReaction, copyText, sendTyping, otherTyping, senderProfiles, pinned, pinnedIds, togglePin, createPoll, sendVoice }: any) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -714,6 +735,11 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
   const [messageQuery, setMessageQuery] = useState("");
   const [muted, setMuted] = useState(() => localStorage.getItem(`groza-muted-${selected.id}`) === "1");
   const [showJump, setShowJump] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordStartedRef = useRef(0);
   const isCreator = selected.type === "group" && selected.created_by === sessionId;
   // Черновики сохраняются отдельно для каждого чата и не теряются при выходе.
   useEffect(() => { setText(localStorage.getItem(`groza-draft-${selected.id}`) || ""); }, [selected.id]);
@@ -725,6 +751,20 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
   const replyMessage = replyTo ? messages.find((x:Message)=>x.id===replyTo.reply_to_id) : null;
   const filteredMessages = messageQuery.trim() ? messages.filter((m:Message)=>String(m.content||"").toLowerCase().includes(messageQuery.trim().toLowerCase())) : messages;
   const toggleMute = () => { const next=!muted; setMuted(next); localStorage.setItem(`groza-muted-${selected.id}`, next?"1":"0"); setMenuOpen(false); };
+  const startVoice = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { alert("Голосовые сообщения не поддерживаются этим браузером."); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      const preferred = ["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus"].find(t=>MediaRecorder.isTypeSupported(t));
+      const rec = preferred ? new MediaRecorder(stream,{mimeType:preferred}) : new MediaRecorder(stream);
+      recordChunksRef.current=[]; recordStartedRef.current=Date.now(); setRecordSeconds(0);
+      rec.ondataavailable=(e)=>{ if(e.data.size) recordChunksRef.current.push(e.data); };
+      rec.onstop=async()=>{ stream.getTracks().forEach(t=>t.stop()); const sec=(Date.now()-recordStartedRef.current)/1000; setRecording(false); setRecordSeconds(0); const blob=new Blob(recordChunksRef.current,{type:rec.mimeType||"audio/webm"}); if(blob.size>500) await sendVoice(blob,sec); };
+      recorderRef.current=rec; rec.start(250); setRecording(true);
+    } catch(e) { console.error(e); alert("Не удалось получить доступ к микрофону. Разрешите доступ к микрофону в браузере."); }
+  };
+  const stopVoice = () => { if(recorderRef.current?.state==="recording") recorderRef.current.stop(); };
+  useEffect(()=>{ if(!recording)return; const id=window.setInterval(()=>setRecordSeconds(Math.max(1,Math.floor((Date.now()-recordStartedRef.current)/1000))),500); return()=>window.clearInterval(id); },[recording]);
   return <section className="chat">
     <header className="chat-head">
       <button className="icon-btn back" onClick={back}><ArrowLeft/></button>
@@ -736,7 +776,7 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
     <div className="messages" ref={scrollRef} onScroll={onMessagesScroll}>{filteredMessages.length ? filteredMessages.map((m:Message)=><MessageBubble key={m.id} m={m} mine={m.sender_id===sessionId} messages={messages} onOpenPhoto={onOpenPhoto} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} onReply={setReplyTo} reactions={reactions[m.id]||[]} toggleReaction={toggleReaction} copyText={copyText} senderProfile={senderProfiles?.[m.sender_id]} isGroup={selected.type==="group"} togglePin={togglePin} isPinned={pinnedIds?.has(m.id)}/>) : <div className="chat-empty">{messageQuery?"Ничего не найдено":"Сообщений пока нет"}</div>}</div>
     {replyTo&&<div className="reply-bar"><Reply size={17}/><span><b>Ответ</b><small>{replyTo.content}</small></span><button onClick={()=>setReplyTo(null)}><X size={18}/></button></div>}
     {showJump&&<button className="jump-latest" onClick={jumpToLatest} title="К последним сообщениям"><ChevronDown size={22}/><span>Новые сообщения</span></button>}
-    <div className="composer"><input id="groza-photo-input" className="photo-input" type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)sendPhoto(file);e.currentTarget.value=""}}/><input id="groza-file-input" className="photo-input" type="file" onChange={e=>{const file=e.target.files?.[0];if(file)sendFile(file);e.currentTarget.value=""}}/><div className="attach-wrap"><button type="button" className={`icon-btn photo-label ${(uploadingPhoto||uploadingFile)?"disabled":""}`} onClick={()=>{const menu=document.getElementById("groza-attach-menu");menu?.classList.toggle("open")}}><Paperclip/></button><div id="groza-attach-menu" className="attach-menu"><label htmlFor="groza-photo-input">Фото</label><label htmlFor="groza-file-input">Файл</label></div></div><input value={text} onChange={e=>{updateDraft(e.target.value);sendTyping(!!e.target.value)}} onBlur={()=>sendTyping(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendWithDraft()}}} placeholder={uploadingPhoto?"Отправляем фото...":"Сообщение"} disabled={uploadingPhoto}/>{text.trim()?<button className="send" onClick={sendWithDraft}><Send/></button>:<button className="icon-btn mic-btn" title="Голосовые сообщения — скоро"><Mic/></button>}</div>
+    <div className="composer"><input id="groza-photo-input" className="photo-input" type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)sendPhoto(file);e.currentTarget.value=""}}/><input id="groza-file-input" className="photo-input" type="file" onChange={e=>{const file=e.target.files?.[0];if(file)sendFile(file);e.currentTarget.value=""}}/><div className="attach-wrap"><button type="button" className={`icon-btn photo-label ${(uploadingPhoto||uploadingFile)?"disabled":""}`} onClick={()=>{const menu=document.getElementById("groza-attach-menu");menu?.classList.toggle("open")}}><Paperclip/></button><div id="groza-attach-menu" className="attach-menu"><label htmlFor="groza-photo-input">Фото</label><label htmlFor="groza-file-input">Файл</label></div></div><input value={text} onChange={e=>{updateDraft(e.target.value);sendTyping(!!e.target.value)}} onBlur={()=>sendTyping(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendWithDraft()}}} placeholder={uploadingPhoto?"Отправляем фото...":"Сообщение"} disabled={uploadingPhoto}/>{text.trim()?<button className="send" onClick={sendWithDraft}><Send/></button>:recording?<button className="voice-stop" onClick={stopVoice} title="Остановить и отправить"><span className="record-dot"/> {recordSeconds || 0}:00</button>:<button className="icon-btn mic-btn" onClick={startVoice} title="Записать голосовое"><Mic/></button>}</div>
     {pollOpen&&<PollCreator onClose={()=>setPollOpen(false)} onCreate={(q:string,o:string[])=>{createPoll(q,o);setPollOpen(false)}}/>}
     {groupManageOpen&&isCreator&&<GroupManager chat={selected} userId={sessionId} onClose={()=>setGroupManageOpen(false)}/>}
     {groupInfoOpen&&<GroupInfo chat={selected} onClose={()=>setGroupInfoOpen(false)}/>}
@@ -817,7 +857,7 @@ function MessageBubble({m,mine,messages,onOpenPhoto,editingId,setEditingId,editi
  const cancelHold=()=>{if(holdTimer.current){clearTimeout(holdTimer.current);holdTimer.current=null}};
  const grouped=reactions.reduce((a:any,r:any)=>{(a[r.emoji]||=[]).push(r);return a},{});
  return <div className={`bubble-row ${mine?"mine":""}`}><div className="bubble-wrap"><div className={`bubble ${deleted?"deleted":""} ${m.message_type==="image"&&!deleted?"photo-bubble":""}`} onPointerDown={startHold} onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold} onContextMenu={e=>{e.preventDefault();setMenuOpen(true)}}>
- {editingId===m.id?<div className="edit-box"><textarea value={editingText} onChange={e=>setEditingText(e.target.value)} autoFocus/><div><button onClick={()=>saveEdit(m.id)}><Check size={15}/>Сохранить</button><button onClick={()=>setEditingId(null)}><X size={15}/>Отмена</button></div></div>:<>{isGroup&&!mine&&<div className="group-message-author"><Avatar p={senderProfile||{id:m.sender_id,display_name:"Пользователь",username:""}}/><b>{senderProfile?.display_name||senderProfile?.username||"Пользователь"}</b></div>}{reply&&<div className="reply-preview"><Reply size={13}/><span><b>{reply.sender_id===m.sender_id?"Сообщение":"Ответ"}</b>{reply.content}</span></div>}{m.message_type==="poll"?<PollCard message={m}/>:m.message_type==="image"&&m.media_url?<button className="photo-message" onClick={()=>onOpenPhoto(m.media_url)}><img src={m.media_url} alt="Фотография"/></button>:m.message_type==="file"&&m.media_url?<a className="file-message" href={m.media_url} target="_blank" rel="noreferrer">📎 <span>{m.content||"Файл"}</span></a>:m.content}<small>{timeOf(m.created_at)}{m.edited?" · изменено":""}{mine&&<span className="delivery">{m.read_at?<CheckCheck size={14}/>:m.delivered_at?<CheckCheck size={14}/>:<Check size={14}/>}</span>}</small></>}
+ {editingId===m.id?<div className="edit-box"><textarea value={editingText} onChange={e=>setEditingText(e.target.value)} autoFocus/><div><button onClick={()=>saveEdit(m.id)}><Check size={15}/>Сохранить</button><button onClick={()=>setEditingId(null)}><X size={15}/>Отмена</button></div></div>:<>{isGroup&&!mine&&<div className="group-message-author"><Avatar p={senderProfile||{id:m.sender_id,display_name:"Пользователь",username:""}}/><b>{senderProfile?.display_name||senderProfile?.username||"Пользователь"}</b></div>}{reply&&<div className="reply-preview"><Reply size={13}/><span><b>{reply.sender_id===m.sender_id?"Сообщение":"Ответ"}</b>{reply.content}</span></div>}{m.message_type==="poll"?<PollCard message={m}/>:m.message_type==="image"&&m.media_url?<button className="photo-message" onClick={()=>onOpenPhoto(m.media_url)}><img src={m.media_url} alt="Фотография"/></button>:String(m.media_type||"").startsWith("audio/")&&m.media_url?<div className="voice-message"><Mic size={18}/><audio controls preload="metadata" src={m.media_url}/><span>{m.content}</span></div>:m.message_type==="file"&&m.media_url?<a className="file-message" href={m.media_url} target="_blank" rel="noreferrer">📎 <span>{m.content||"Файл"}</span></a>:m.content}<small>{timeOf(m.created_at)}{m.edited?" · изменено":""}{mine&&<span className="delivery">{m.read_at?<CheckCheck size={14}/>:m.delivered_at?<CheckCheck size={14}/>:<Check size={14}/>}</span>}</small></>}
  </div>{Object.keys(grouped).length>0&&<div className="reaction-row">{Object.entries(grouped).map(([emoji,rs]:any)=><button key={emoji} className={rs.some((r:any)=>r.user_id===m.sender_id)?"reacted":""} onClick={()=>toggleReaction(m.id,emoji)}>{emoji} {rs.length}</button>)}</div>}
  {menuOpen&&!deleted&&<><div className="message-sheet-backdrop" onClick={()=>setMenuOpen(false)}/><div className="message-sheet"><div className="quick-reactions">{["👍","❤️","😂","🔥","😮"].map(e=><button key={e} onClick={()=>{toggleReaction(m.id,e);setMenuOpen(false)}}>{e}</button>)}</div><button onClick={()=>{onReply(m);setMenuOpen(false)}}><Reply size={19}/>Ответить</button><button onClick={async()=>{await togglePin(m);setMenuOpen(false)}}>{isPinned?"📍 Открепить":"📌 Закрепить"}</button>{m.message_type!=="image"&&<button onClick={()=>{copyText(m.content);setMenuOpen(false)}}><Copy size={19}/>Копировать</button>}{mine&&m.message_type!=="image"&&<button onClick={()=>{setEditingId(m.id);setEditingText(m.content);setMenuOpen(false)}}><Pencil size={19}/>Редактировать</button>}{mine&&<button className="danger" onClick={()=>{deleteMessage(m.id);setMenuOpen(false)}}><Trash2 size={19}/>Удалить</button>}<button className="cancel" onClick={()=>setMenuOpen(false)}>Отмена</button></div></>}</div></div>
 }
