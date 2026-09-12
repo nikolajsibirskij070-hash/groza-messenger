@@ -784,7 +784,11 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
     // После отправки или удаления сообщения всегда возвращаем список к актуальному нижнему краю.
     const id = requestAnimationFrame(() => {
       const el = scrollRef.current;
-      if (el) el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+      if (el) {
+        // Два кадра подряд: DOM успевает убрать удалённый элемент и список точно встаёт в самый низ.
+        el.scrollTop = el.scrollHeight;
+        requestAnimationFrame(()=>{ el.scrollTop = el.scrollHeight; });
+      }
     });
     return () => cancelAnimationFrame(id);
   }, [messages]);
@@ -793,7 +797,8 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
   const onMessagesScroll = () => { const el=scrollRef.current; if(!el)return; setShowJump(el.scrollHeight-el.scrollTop-el.clientHeight>220); };
   const jumpToLatest = () => scrollRef.current?.scrollTo({top:scrollRef.current.scrollHeight,behavior:"smooth"});
   const replyMessage = replyTo ? messages.find((x:Message)=>x.id===replyTo.reply_to_id) : null;
-  const filteredMessages = messageQuery.trim() ? messages.filter((m:Message)=>String(m.content||"").toLowerCase().includes(messageQuery.trim().toLowerCase())) : messages;
+  const visibleMessages = messages.filter((m:Message)=>!m.deleted_at);
+  const filteredMessages = messageQuery.trim() ? visibleMessages.filter((m:Message)=>String(m.content||"").toLowerCase().includes(messageQuery.trim().toLowerCase())) : visibleMessages;
   const toggleMute = () => { const next=!muted; setMuted(next); localStorage.setItem(`groza-muted-${selected.id}`, next?"1":"0"); setMenuOpen(false); };
   const formatVoiceTime = (sec:number) => `${Math.floor(sec/60)}:${String(sec%60).padStart(2,"0")}`;
   const cleanupPreview = () => {
@@ -946,11 +951,11 @@ function VoiceMessage({src,label}:any){
  const total=Math.max(duration||0,fallback||0);
  const fmt=(v:number)=>`${Math.floor(v/60)}:${String(Math.floor(v%60)).padStart(2,"0")}`;
  const toggle=async()=>{const a=audioRef.current;if(!a)return;if(a.paused){try{await a.play()}catch{}}else a.pause()};
- return <div className="voice-message" onPointerDown={e=>e.stopPropagation()}>
+ return <div className="voice-message compact-voice" onPointerDown={e=>e.stopPropagation()}>
    <audio ref={audioRef} src={src} preload="metadata" onLoadedMetadata={e=>setDuration(Number.isFinite(e.currentTarget.duration)?e.currentTarget.duration:0)} onTimeUpdate={e=>setCurrent(e.currentTarget.currentTime)} onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)} onEnded={()=>{setPlaying(false);setCurrent(0)}}/>
-   <button className="voice-bubble-play" onClick={toggle} aria-label={playing?"Пауза":"Слушать"}>{playing?<Pause size={28} fill="currentColor"/>:<Play size={30} fill="currentColor"/>}</button>
-   <div className="voice-bubble-main"><div className="voice-bars">{Array.from({length:28}).map((_,i)=><i key={i} style={{height:`${8+((i*17)%23)}px`}}/>)}</div><div className="voice-bubble-meta"><b>{fmt(current)}</b><span>•</span><em>{fmt(total)}</em></div></div>
-   <Mic size={22} className="voice-bubble-mic"/>
+   <button className="voice-bubble-play" onClick={toggle} aria-label={playing?"Пауза":"Слушать"}>{playing?<Pause size={18} fill="currentColor"/>:<Play size={19} fill="currentColor"/>}</button>
+   <div className="voice-bubble-main"><div className="voice-bars">{Array.from({length:22}).map((_,i)=><i key={i} style={{height:`${7+((i*13)%15)}px`}}/>)}</div><div className="voice-bubble-meta"><b>{fmt(current)}</b><span>•</span><em>{fmt(total)}</em></div></div>
+   <Mic size={16} className="voice-bubble-mic"/>
  </div>
 }
 
