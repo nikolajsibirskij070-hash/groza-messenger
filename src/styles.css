@@ -457,3 +457,23 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
 .chat-list-loading i{display:block;height:62px;border-radius:16px;background:linear-gradient(90deg,var(--panel2),var(--hover),var(--panel2));background-size:200% 100%;animation:chatShimmer 1.1s infinite linear}
 .chat-list-loading span{text-align:center;font-size:12px;margin-top:2px}
 @keyframes chatShimmer{to{background-position:-200% 0}}
+/* v26 — extra themes */
+:root[data-theme="midnight"]{--bg:#080b18;--panel:#10152a;--panel2:#171e38;--hover:#202a4a;--line:#2b3760;--text:#edf1ff;--muted:#8f9abc;--accent:#7188ff;--accentText:#fff;--mine:#263052}
+:root[data-theme="emerald"]{--bg:#071714;--panel:#0d211d;--panel2:#12302a;--hover:#173d34;--line:#285448;--text:#e9fff7;--muted:#8cb8a8;--accent:#51d49a;--accentText:#062016;--mine:#1d4a3d}
+:root[data-theme="sunset"]{--bg:#211217;--panel:#321b23;--panel2:#44232d;--hover:#5a2c35;--line:#70404a;--text:#fff1e9;--muted:#d0a69c;--accent:#ff9b62;--accentText:#32150c;--mine:#61352f}
+:root[data-theme="rose"]{--bg:#21121c;--panel:#321a2b;--panel2:#45243a;--hover:#5c304d;--line:#70415f;--text:#fff0fa;--muted:#d5a9c5;--accent:#ff82c8;--accentText:#321024;--mine:#633550}
+:root[data-theme="ocean"]{--bg:#07171f;--panel:#0c2631;--panel2:#103541;--hover:#164a58;--line:#246272;--text:#e8fbff;--muted:#91bdc8;--accent:#4fd5e8;--accentText:#08242a;--mine:#1c5361}
+:root[data-theme="coffee"]{--bg:#19120e;--panel:#291d17;--panel2:#382820;--hover:#4b372b;--line:#604637;--text:#fff5ea;--muted:#c4aa94;--accent:#d39a68;--accentText:#2b180d;--mine:#5a4030}
+:root[data-theme="graphite"]{--bg:#111215;--panel:#1a1c21;--panel2:#24272d;--hover:#30343b;--line:#3c414a;--text:#f1f2f4;--muted:#9da1aa;--accent:#c5c9d2;--accentText:#15161a;--mine:#353941}
+:root[data-theme="aurora"]{--bg:#0a1416;--panel:#102125;--panel2:#163137;--hover:#1d4449;--line:#2a5a60;--text:#ecffff;--muted:#99c8c9;--accent:#7be7cf;--accentText:#092420;--mine:#24534f}
+/* v26 — Telegram-like group profile */
+.group-profile-backdrop{background:rgba(2,5,10,.68);backdrop-filter:blur(8px)}
+.group-profile-sheet{position:relative;width:min(430px,100%);max-height:min(760px,92vh);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:22px;box-shadow:0 28px 90px #0009}
+.group-profile-hero{padding:28px 28px 20px;display:flex;align-items:center;gap:15px;background:linear-gradient(180deg,var(--panel2),var(--panel))}
+.group-profile-hero .avatar{width:84px;height:84px;flex-basis:84px;font-size:24px}.group-profile-hero h2{margin:0;font-size:22px}.group-profile-hero small{display:block;color:var(--muted);margin-top:5px}
+.group-profile-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px 14px 14px;border-bottom:1px solid var(--line)}
+.group-profile-actions button{min-height:64px;border:0;border-radius:12px;background:var(--panel2);color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:11px}.group-profile-actions button:hover{background:var(--hover);color:var(--accent)}
+.group-profile-media{padding:10px 14px;border-bottom:1px solid var(--line);display:grid;gap:2px}.group-profile-media button{border:0;background:transparent;color:var(--text);padding:10px 6px;display:flex;align-items:center;gap:16px;text-align:left;border-radius:10px}.group-profile-media button:hover{background:var(--hover)}.group-profile-media button svg{color:var(--muted)}
+.group-profile-members-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 10px;border-top:6px solid var(--bg);color:var(--muted)}.group-profile-members-head>div{display:flex;align-items:center;gap:10px}.group-profile-members-head b{font-size:12px;letter-spacing:.04em}
+.group-profile-members{padding:0 14px 18px;display:grid;gap:3px}.group-profile-member{display:flex;align-items:center;gap:11px;padding:10px 6px;border-radius:12px}.group-profile-member:hover{background:var(--hover)}.group-profile-member span{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}.group-profile-member small{color:var(--muted);font-size:11px}.group-profile-member b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:760px){.group-profile-backdrop{padding:0;align-items:end}.group-profile-sheet{width:100%;max-height:88dvh;border-radius:24px 24px 0 0;border-bottom:0}.group-profile-hero{padding-top:26px}.group-profile-actions{padding-bottom:16px}}

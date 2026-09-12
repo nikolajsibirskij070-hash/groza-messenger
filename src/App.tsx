@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search, MessageCircle, Users, Settings, Plus, Send, Paperclip, Smile, Mic,
   ArrowLeft, MoreVertical, LogOut, Sun, Moon, Pencil, Trash2, Check, X,
-  Bell, BellOff, Download, Wifi, WifiOff, Circle, UserX, Ban, ShieldBan, UserRoundPen, Reply, Copy, Heart, ThumbsUp, Laugh, Eye, CheckCheck, Palette, Lock, UserRound, XCircle
+  Bell, BellOff, Download, Wifi, WifiOff, Circle, UserX, Ban, ShieldBan, UserRoundPen, Reply, Copy, Heart, ThumbsUp, Laugh, Eye, CheckCheck, Palette, Lock, UserRound, XCircle, SlidersHorizontal, BarChart3, Image as ImageIcon, Video, FileText, Link as LinkIcon, UserPlus
 } from "lucide-react";
 import { supabase, configured } from "./lib/supabase";
 
@@ -661,9 +661,34 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
 
 function GroupInfo({chat,onClose}:any){
  const [members,setMembers]=useState<any[]>([]);
- useEffect(()=>{(async()=>{const {data}=await supabase?.from("chat_members").select("user_id,role,profiles(id,username,display_name,avatar_url)").eq("chat_id",chat.id).order("joined_at");setMembers(data||[])})()},[chat.id]);
+ const [stats,setStats]=useState({photos:0,videos:0,files:0,links:0,voice:0});
+ useEffect(()=>{(async()=>{
+   if(!supabase)return;
+   const [memRes,msgRes]=await Promise.all([
+     supabase.from("chat_members").select("user_id,role,profiles(id,username,display_name,avatar_url,online,last_seen)").eq("chat_id",chat.id).order("joined_at"),
+     supabase.from("messages").select("message_type,content,media_type").eq("chat_id",chat.id)
+   ]);
+   setMembers(memRes.data||[]);
+   const rows:any[]=msgRes.data||[];
+   setStats({
+     photos:rows.filter((m:any)=>m.message_type==="image"||String(m.media_type||"").startsWith("image/")).length,
+     videos:rows.filter((m:any)=>m.message_type==="video"||String(m.media_type||"").startsWith("video/")).length,
+     files:rows.filter((m:any)=>m.message_type==="file").length,
+     links:rows.filter((m:any)=>/https?:\/\//i.test(m.content||"")).length,
+     voice:rows.filter((m:any)=>m.message_type==="voice"||String(m.media_type||"").startsWith("audio/")).length
+   });
+ })()},[chat.id]);
  const roleName=(r:string)=>r==="owner"?"Создатель":r==="admin"?"Администратор":r==="moderator"?"Модератор":"Участник";
- return <div className="modal-backdrop" onClick={onClose}><div className="group-modal group-info" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={onClose}><X/></button><h2>{chat.name}</h2><small>Участники · {members.length}</small><div className="manage-members">{members.map((m:any)=>{const p=m.profiles||{};return <div key={m.user_id}><Avatar p={{id:m.user_id,display_name:p.display_name||"Пользователь",username:p.username||"",avatar_url:p.avatar_url}}/><span><b>{p.display_name||"Пользователь"}</b><small>@{p.username||""}</small></span><strong className={`role-badge role-${m.role}`}>{roleName(m.role)}</strong></div>})}</div></div></div>
+ const avatar={id:chat.id,display_name:chat.name,avatar_url:chat.avatar_url};
+ const mediaRows:any[]=[[ImageIcon,stats.photos,"фотографий"],[Video,stats.videos,"видео"],[FileText,stats.files,"файлов"],[LinkIcon,stats.links,"ссылок"],[Mic,stats.voice,"голосовых сообщений"]];
+ return <div className="modal-backdrop group-profile-backdrop" onClick={onClose}><div className="group-profile-sheet" onClick={e=>e.stopPropagation()}>
+   <button className="modal-x" onClick={onClose}><X/></button>
+   <div className="group-profile-hero"><Avatar p={avatar}/><div><h2>{chat.name}</h2><small>{members.length} участников</small></div></div>
+   <div className="group-profile-actions"><button><Bell size={19}/><span>Звук</span></button><button><SlidersHorizontal size={19}/><span>Управление</span></button><button><BarChart3 size={19}/><span>Медиа</span></button><button><MoreVertical size={19}/><span>Ещё</span></button></div>
+   <div className="group-profile-media">{mediaRows.map(([Icon,count,label]:any)=><button key={label}><Icon size={20}/><span>{count} {label}</span></button>)}</div>
+   <div className="group-profile-members-head"><div><Users size={19}/><b>{members.length} УЧАСТНИКА</b></div><UserPlus size={20}/></div>
+   <div className="group-profile-members">{members.map((m:any)=>{const p=m.profiles||{};return <div className="group-profile-member" key={m.user_id}><Avatar p={{id:m.user_id,display_name:p.display_name||"Пользователь",username:p.username||"",avatar_url:p.avatar_url,online:p.online}}/><span><b>{p.display_name||"Пользователь"}</b><small>{p.online?"в сети":`@${p.username||""}`}</small></span><strong className={`role-badge role-${m.role}`}>{roleName(m.role)}</strong></div>})}</div>
+ </div></div>
 }
 
 function GroupManager({chat,userId,onClose}:any){
@@ -701,7 +726,7 @@ function SettingsPanel({dark,setDark,notifications,requestNotifications,setNotif
  const unblock=async(id:string)=>{await supabase?.from("blocked_users").delete().eq("blocker_id",userId).eq("blocked_id",id);setBlocked(x=>x.filter(p=>p.id!==id))};
  return <div className="settings-panel"><div className="settings-title">Настройки</div>
  <div className="profile-card"><div className="profile-card-title"><UserRoundPen size={18}/>Ваш профиль</div><label>Имя</label><input value={displayName} onChange={e=>setDisplayName(e.target.value)} maxLength={80}/><label>Username</label><input value={username} onChange={e=>setUsername(e.target.value.replace(/\s/g,""))} maxLength={32}/><label>О себе</label><input value={bio} onChange={e=>setBio(e.target.value)} maxLength={160}/><button className="profile-save" onClick={saveProfile} disabled={saving}>{saving?"Сохраняем...":"Сохранить профиль"}</button>{profileError&&<div className="profile-error">{profileError}</div>}</div>
- <div className="settings-subtitle"><Palette size={17}/>Темы оформления</div><div className="theme-grid">{[["dark","🌙 Тёмная"],["light","☀️ Светлая"],["purple","🟣 Фиолетовая"],["blue","🔵 Синяя"]].map(([id,label])=><button key={id} className={theme===id?"theme-active":""} onClick={()=>applyTheme(id)}>{label}</button>)}</div>
+ <div className="settings-subtitle"><Palette size={17}/>Темы оформления</div><div className="theme-grid">{[["dark","🌙 Тёмная"],["light","☀️ Светлая"],["purple","🟣 Фиолетовая"],["blue","🔵 Синяя"],["midnight","🌌 Полночь"],["emerald","💚 Изумрудная"],["sunset","🌅 Закат"],["rose","🌸 Розовая"],["ocean","🌊 Океан"],["coffee","☕ Кофейная"],["graphite","🪨 Графит"],["aurora","✨ Аврора"]].map(([id,label])=><button key={id} className={theme===id?"theme-active":""} onClick={()=>applyTheme(id)}>{label}</button>)}</div>
  <div className="settings-subtitle"><Lock size={17}/>Приватность</div><div className="privacy-card"><label>Кто может писать мне</label><select value={privacy.allow_messages} onChange={e=>savePrivacy({...privacy,allow_messages:e.target.value})}><option value="everyone">Все</option><option value="contacts">Только существующие чаты</option><option value="nobody">Никто</option></select><button className={`privacy-switch ${privacy.show_online?"on":""}`} onClick={()=>savePrivacy({...privacy,show_online:!privacy.show_online})}>Показывать «В сети»</button><button className={`privacy-switch ${privacy.show_last_seen?"on":""}`} onClick={()=>savePrivacy({...privacy,show_last_seen:!privacy.show_last_seen})}>Показывать время посещения</button></div>
  <div className="settings-subtitle"><Ban size={17}/>Чёрный список</div><div className="blocked-list">{blocked.length?blocked.map(p=><div className="blocked-user" key={p.id}><Avatar p={p}/><span><b>{p.display_name}</b><small>@{p.username}</small></span><button onClick={()=>unblock(p.id)}>Разблокировать</button></div>):<div className="empty-small">Заблокированных пользователей нет</div>}</div>
  <div className="setting"><span>{notifications?<Bell size={17}/>:<BellOff size={17}/>}Уведомления</span><button className={`switch ${notifications?"on":""}`} onClick={()=>notifications?setNotifications(false):requestNotifications()}><i/></button></div>{installEvent&&<button className="install-btn" onClick={async()=>{installEvent.prompt();await installEvent.userChoice}}><Download size={17}/>Установить ГРОЗА</button>}<button className="logout" onClick={logout}><LogOut/>Выйти</button></div>
