@@ -19,7 +19,7 @@ type Chat = {
 type Message = {
   id: string; chat_id: string; sender_id: string; content: string;
   message_type?: "text" | "image" | "file" | "poll" | string; media_url?: string | null; media_type?: string | null;
-  created_at: string; updated_at?: string; edited?: boolean; deleted_at?: string | null; reply_to_id?: string | null; delivered_at?: string | null; read_at?: string | null;
+  created_at: string; updated_at?: string; edited?: boolean; deleted_at?: string | null; reply_to_id?: string | null; delivered_at?: string | null; read_at?: string | null; media_duration?: number | null;
 };
 
 type Tab = "chats" | "people" | "settings";
@@ -228,7 +228,9 @@ export default function App() {
       user_id: session.user.id,
       endpoint: subscription.endpoint,
       p256dh: json.keys?.p256dh || "",
-      auth: json.keys?.auth || ""
+      auth: json.keys?.auth || "",
+      subscription: json,
+      updated_at: new Date().toISOString()
     }, { onConflict: "endpoint" });
     if (pushError) throw pushError;
   }
@@ -406,7 +408,7 @@ export default function App() {
 
   async function loadMessages(chatId: string) {
     if (!supabase) return;
-    const { data, error: e } = await supabase.from("messages").select("id,chat_id,sender_id,content,message_type,media_url,media_type,created_at,updated_at,edited,deleted_at,reply_to_id,delivered_at,read_at").eq("chat_id", chatId).order("created_at", { ascending: true }).limit(300);
+    const { data, error: e } = await supabase.from("messages").select("id,chat_id,sender_id,content,message_type,media_url,media_type,media_duration,created_at,updated_at,edited,deleted_at,reply_to_id,delivered_at,read_at").eq("chat_id", chatId).order("created_at", { ascending: true }).limit(300);
     if (e) { setError(e.message); return; }
     const rows = (data || []) as Message[];
     setMessages(rows);
@@ -611,7 +613,7 @@ export default function App() {
       // Используем существующий тип file, чтобы не требовать изменения CHECK constraint в БД.
       const { data, error: messageError } = await supabase.from("messages").insert({
         chat_id:selected.id, sender_id:session.user.id, content:label, message_type:"file",
-        media_url:publicUrl.publicUrl, media_type:mime
+        media_url:publicUrl.publicUrl, media_type:mime, media_duration:Math.max(1, Math.round(durationSec))
       }).select().single();
       if (messageError) throw messageError;
       if (data) { const m=data as Message; setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]); updateChatPreview(m.chat_id, "🎤 Голосовое сообщение", m.created_at); await sendPush(m.chat_id,m); }
@@ -946,12 +948,12 @@ function GroupGallery({chat,kind,onClose}:any){
  return <div className="modal-backdrop" onClick={onClose}><div className="gallery-modal" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={onClose}><X/></button><h2>{kind}</h2>{loading?<p>Загрузка...</p>:!items.length?<p>Пока ничего нет</p>:<div className="gallery-grid">{items.map(m=>m.message_type==="image"?<img key={m.id} src={m.media_url} alt=""/>:<a key={m.id} href={m.media_url||"#"} target="_blank" rel="noreferrer">{m.content||"Файл"}</a>)}</div>}</div></div>
 }
 
-function VoiceMessage({src,label}:any){
+function VoiceMessage({src,label,durationHint}:any){
  const audioRef=useRef<HTMLAudioElement|null>(null);
  const [playing,setPlaying]=useState(false);
  const [current,setCurrent]=useState(0);
  const [duration,setDuration]=useState(0);
- const fallback=Number((String(label||"").match(/(\d+)\s*сек/)||[])[1]||0);
+ const fallback=Number(durationHint)||Number((String(label||"").match(/(\d+)\s*сек/)||[])[1]||0);
  const total=Math.max(duration||0,fallback||0);
  const fmt=(v:number)=>`${Math.floor(v/60)}:${String(Math.floor(v%60)).padStart(2,"0")}`;
  const toggle=async()=>{const a=audioRef.current;if(!a)return;if(a.paused){try{await a.play()}catch{}}else a.pause()};
@@ -969,7 +971,7 @@ function MessageBubble({m,mine,messages,onOpenPhoto,editingId,setEditingId,editi
  const cancelHold=()=>{if(holdTimer.current){clearTimeout(holdTimer.current);holdTimer.current=null}};
  const grouped=reactions.reduce((a:any,r:any)=>{(a[r.emoji]||=[]).push(r);return a},{});
  return <div className={`bubble-row ${mine?"mine":""}`}><div className="bubble-wrap"><div className={`bubble ${deleted?"deleted":""} ${m.message_type==="image"&&!deleted?"photo-bubble":""}`} onPointerDown={startHold} onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold} onContextMenu={e=>{e.preventDefault();setMenuOpen(true)}}>
- {editingId===m.id?<div className="edit-box"><textarea value={editingText} onChange={e=>setEditingText(e.target.value)} autoFocus/><div><button onClick={()=>saveEdit(m.id)}><Check size={15}/>Сохранить</button><button onClick={()=>setEditingId(null)}><X size={15}/>Отмена</button></div></div>:<>{isGroup&&!mine&&<div className="group-message-author"><Avatar p={senderProfile||{id:m.sender_id,display_name:"Пользователь",username:""}}/><b>{senderProfile?.display_name||senderProfile?.username||"Пользователь"}</b></div>}{reply&&<div className="reply-preview"><Reply size={13}/><span><b>{reply.sender_id===m.sender_id?"Сообщение":"Ответ"}</b>{reply.content}</span></div>}{m.message_type==="poll"?<PollCard message={m}/>:m.message_type==="image"&&m.media_url?<button className="photo-message" onClick={()=>onOpenPhoto(m.media_url)}><img src={m.media_url} alt="Фотография"/></button>:String(m.media_type||"").startsWith("audio/")&&m.media_url?<VoiceMessage src={m.media_url} label={m.content}/>:m.message_type==="file"&&m.media_url?<a className="file-message" href={m.media_url} target="_blank" rel="noreferrer">📎 <span>{m.content||"Файл"}</span></a>:m.content}<small>{timeOf(m.created_at)}{m.edited?" · изменено":""}{mine&&<span className="delivery">{m.read_at?<CheckCheck size={14}/>:m.delivered_at?<CheckCheck size={14}/>:<Check size={14}/>}</span>}</small></>}
+ {editingId===m.id?<div className="edit-box"><textarea value={editingText} onChange={e=>setEditingText(e.target.value)} autoFocus/><div><button onClick={()=>saveEdit(m.id)}><Check size={15}/>Сохранить</button><button onClick={()=>setEditingId(null)}><X size={15}/>Отмена</button></div></div>:<>{isGroup&&!mine&&<div className="group-message-author"><Avatar p={senderProfile||{id:m.sender_id,display_name:"Пользователь",username:""}}/><b>{senderProfile?.display_name||senderProfile?.username||"Пользователь"}</b></div>}{reply&&<div className="reply-preview"><Reply size={13}/><span><b>{reply.sender_id===m.sender_id?"Сообщение":"Ответ"}</b>{reply.content}</span></div>}{m.message_type==="poll"?<PollCard message={m}/>:m.message_type==="image"&&m.media_url?<button className="photo-message" onClick={()=>onOpenPhoto(m.media_url)}><img src={m.media_url} alt="Фотография"/></button>:String(m.media_type||"").startsWith("audio/")&&m.media_url?<VoiceMessage src={m.media_url} label={m.content} durationHint={m.media_duration}/>:m.message_type==="file"&&m.media_url?<a className="file-message" href={m.media_url} target="_blank" rel="noreferrer">📎 <span>{m.content||"Файл"}</span></a>:m.content}<small>{timeOf(m.created_at)}{m.edited?" · изменено":""}{mine&&<span className="delivery">{m.read_at?<CheckCheck size={14}/>:m.delivered_at?<CheckCheck size={14}/>:<Check size={14}/>}</span>}</small></>}
  </div>{Object.keys(grouped).length>0&&<div className="reaction-row">{Object.entries(grouped).map(([emoji,rs]:any)=><button key={emoji} className={rs.some((r:any)=>r.user_id===m.sender_id)?"reacted":""} onClick={()=>toggleReaction(m.id,emoji)}>{emoji} {rs.length}</button>)}</div>}
  {menuOpen&&!deleted&&<><div className="message-sheet-backdrop" onClick={()=>setMenuOpen(false)}/><div className="message-sheet"><div className="quick-reactions">{["👍","❤️","😂","🔥","😮"].map(e=><button key={e} onClick={()=>{toggleReaction(m.id,e);setMenuOpen(false)}}>{e}</button>)}</div><button onClick={()=>{onReply(m);setMenuOpen(false)}}><Reply size={19}/>Ответить</button><button onClick={async()=>{await togglePin(m);setMenuOpen(false)}}>{isPinned?"📍 Открепить":"📌 Закрепить"}</button>{m.message_type!=="image"&&<button onClick={()=>{copyText(m.content);setMenuOpen(false)}}><Copy size={19}/>Копировать</button>}{mine&&m.message_type!=="image"&&<button onClick={()=>{setEditingId(m.id);setEditingText(m.content);setMenuOpen(false)}}><Pencil size={19}/>Редактировать</button>}{mine&&<button className="danger" onClick={()=>{deleteMessage(m.id);setMenuOpen(false)}}><Trash2 size={19}/>Удалить</button>}<button className="cancel" onClick={()=>setMenuOpen(false)}>Отмена</button></div></>}</div></div>
 }
