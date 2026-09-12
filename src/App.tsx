@@ -28,6 +28,16 @@ const initials = (name = "?") => name.trim().split(/\s+/).slice(0, 2).map(x => x
 const timeOf = (iso?: string) => iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
 const dateOf = (iso?: string) => iso ? new Date(iso).toLocaleDateString([], { day: "2-digit", month: "2-digit" }) : "";
 
+const storagePathFromPublicUrl = (url?: string | null) => {
+  if (!url) return null;
+  try {
+    const marker = "/storage/v1/object/public/chat-media/";
+    const i = url.indexOf(marker);
+    if (i < 0) return null;
+    return decodeURIComponent(url.slice(i + marker.length).split("?")[0]);
+  } catch { return null; }
+};
+
 function svgAvatar(name: string, seed: string, size = 42) {
   const hue = [...seed].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 17);
   const bg = `hsl(${hue} 28% 28%)`;
@@ -591,7 +601,7 @@ export default function App() {
     if (!selected || !supabase || !session?.user?.id) return;
     try {
       const mime = blob.type || "audio/webm";
-      const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
+      const ext = mime.includes("mp4") || mime.includes("aac") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
       const uuid = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const path = `${selected.id}/${session.user.id}/voice/${uuid}.${ext}`;
       const { error: uploadError } = await supabase.storage.from("chat-media").upload(path, blob, { contentType: mime, upsert:false });
@@ -644,10 +654,32 @@ export default function App() {
     if (e) setError(e.message); else { setEditingId(null); setEditingText(""); }
   }
   async function deleteMessage(id: string) {
-    if (!supabase) return;
-    const { error: e } = await supabase.from("messages").update({ deleted_at: new Date().toISOString(), content: "Сообщение удалено", updated_at: new Date().toISOString() }).eq("id", id).eq("sender_id", session.user.id);
-    if (e) setError(e.message);
+    if (!supabase || !session?.user?.id) return;
+    const message = messages.find(m => m.id === id);
+    if (!message) return;
+
+    // Сразу убираем сообщение из интерфейса — оно должно полностью исчезнуть.
+    setMessages(prev => prev.filter(m => m.id !== id));
+
+    // Фото, голосовые и файлы удаляем также из Storage.
+    const path = storagePathFromPublicUrl(message.media_url);
+    if (path) {
+      const { error: storageError } = await supabase.storage.from("chat-media").remove([path]);
+      if (storageError) {
+        console.warn("MEDIA DELETE:", storageError);
+        setError(`Сообщение исчезло из чата, но файл в Storage не удалился: ${storageError.message}`);
+      }
+    }
+
+    const { error: e } = await supabase.from("messages").delete().eq("id", id).eq("sender_id", session.user.id);
+    if (e) {
+      setMessages(prev => prev.some(m => m.id === message.id) ? prev : [...prev, message]);
+      setError(e.message);
+      return;
+    }
+    await loadChats();
   }
+
   async function deleteCurrentChat(chat: Chat, ask = true) {
     if (!supabase || !session?.user?.id) return;
     const ok = !ask || window.confirm(`Удалить чат с ${chat.name} из вашего списка?`);
@@ -754,12 +786,39 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
   const startVoice = async () => {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { alert("Голосовые сообщения не поддерживаются этим браузером."); return; }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({audio:true});
-      const preferred = ["audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus"].find(t=>MediaRecorder.isTypeSupported(t));
-      const rec = preferred ? new MediaRecorder(stream,{mimeType:preferred}) : new MediaRecorder(stream);
+      // Высокое качество и совместимость с iPhone/Android.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000,
+          sampleSize: 16
+        }
+      });
+      const supports = (type: string) => typeof MediaRecorder.isTypeSupported === "function" && MediaRecorder.isTypeSupported(type);
+      const preferred = [
+        "audio/mp4;codecs=mp4a.40.2",
+        "audio/mp4",
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus"
+      ].find(supports);
+      const options: MediaRecorderOptions = { audioBitsPerSecond: 128000 };
+      if (preferred) options.mimeType = preferred;
+      const rec = new MediaRecorder(stream, options);
       recordChunksRef.current=[]; recordStartedRef.current=Date.now(); setRecordSeconds(0);
       rec.ondataavailable=(e)=>{ if(e.data.size) recordChunksRef.current.push(e.data); };
-      rec.onstop=async()=>{ stream.getTracks().forEach(t=>t.stop()); const sec=(Date.now()-recordStartedRef.current)/1000; setRecording(false); setRecordSeconds(0); const blob=new Blob(recordChunksRef.current,{type:rec.mimeType||"audio/webm"}); if(blob.size>500) await sendVoice(blob,sec); };
+      rec.onerror=(e:any)=>{ console.error("VOICE RECORDER:", e); setRecording(false); stream.getTracks().forEach(t=>t.stop()); };
+      rec.onstop=async()=>{
+        stream.getTracks().forEach(t=>t.stop());
+        const sec=(Date.now()-recordStartedRef.current)/1000;
+        setRecording(false); setRecordSeconds(0);
+        const fallback = preferred?.includes("mp4") ? "audio/mp4" : "audio/webm";
+        const blob=new Blob(recordChunksRef.current,{type:rec.mimeType||preferred||fallback});
+        if(blob.size>500) await sendVoice(blob,sec);
+      };
       recorderRef.current=rec; rec.start(250); setRecording(true);
     } catch(e) { console.error(e); alert("Не удалось получить доступ к микрофону. Разрешите доступ к микрофону в браузере."); }
   };

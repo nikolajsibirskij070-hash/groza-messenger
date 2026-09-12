@@ -37,3 +37,10 @@ designed for browser/client use; never put a Supabase secret/service-role key in
 ## Фотографии
 
 Для отправки фотографий один раз запустите обновлённый файл `supabase/mobile_realtime.sql` в Supabase SQL Editor. Он добавляет поля для медиа и создаёт Storage bucket `chat-media` с ограничением 10 МБ на изображение.
+
+## v36 — голосовые и настоящее удаление медиа
+- Удалённое голосовое/фото/файл полностью исчезает из чата.
+- Для медиа дополнительно удаляется объект из `chat-media`.
+- Голосовые используют MP4/AAC на iPhone/Safari и Opus/WebM на Chrome/Android.
+- Запись запрашивает 48 кГц и 128 кбит/с, с подавлением шума/эха.
+- Выполните `supabase/v36_media_delete_and_voice.sql` один раз в SQL Editor.
