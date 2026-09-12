@@ -61,6 +61,8 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [senderProfiles, setSenderProfiles] = useState<Record<string, Profile>>({});
   const [chats, setChats] = useState<Chat[]>([]);
+  // Не показываем «Нет чатов», пока первый список реально не загрузился.
+  const [chatsReady, setChatsReady] = useState(false);
   const [people, setPeople] = useState<Profile[]>([]);
   const [peopleQuery, setPeopleQuery] = useState("");
   const [peopleSearched, setPeopleSearched] = useState(false);
@@ -105,6 +107,7 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return;
+    setChatsReady(false);
     loadChats();
     setOnline(true);
     return () => { setOnline(false); };
@@ -283,99 +286,108 @@ export default function App() {
   async function loadChats() {
     if (!supabase || !session?.user?.id) return;
 
-    const { data: hiddenRows } = await supabase
-      .from("hidden_chats")
-      .select("chat_id")
-      .eq("user_id", session.user.id);
-    const hiddenIds = new Set((hiddenRows || []).map((x: any) => x.chat_id));
+    // Важно: не очищаем старый список во время фонового обновления — тогда
+    // мобильный интерфейс не будет на несколько секунд выглядеть пустым.
+    try {
+      const userId = session.user.id;
+      const { data: hiddenRows, error: hiddenError } = await supabase
+        .from("hidden_chats")
+        .select("chat_id")
+        .eq("user_id", userId);
+      if (hiddenError) throw hiddenError;
+      const hiddenIds = new Set((hiddenRows || []).map((x: any) => x.chat_id));
 
-    const { data: memberships, error: me } = await supabase
-      .from("chat_members")
-      .select("chat_id, chats(id,type,title,created_at,created_by)")
-      .eq("user_id", session.user.id);
+      const { data: memberships, error: me } = await supabase
+        .from("chat_members")
+        .select("chat_id, chats(id,type,title,created_at,created_by)")
+        .eq("user_id", userId);
+      if (me) throw me;
 
-    if (me) { setError(me.message); return; }
+      const rows = ((memberships || []) as any[]).filter(r => !hiddenIds.has(r.chat_id));
+      const allIds = ((memberships || []) as any[]).map(r => r.chat_id).filter(Boolean);
+      chatIdsRef.current = new Set(allIds);
 
-    const rows = ((memberships || []) as any[]).filter(r => !hiddenIds.has(r.chat_id));
-    const allIds = ((memberships || []) as any[]).map(r => r.chat_id).filter(Boolean);
-    chatIdsRef.current = new Set(allIds);
+      if (!rows.length) { setChats([]); return; }
+      const ids = rows.map(r => r.chat_id);
 
-    if (!rows.length) { setChats([]); return; }
+      // Загружаем данные параллельно, чтобы список чатов появлялся быстрее.
+      const [membersResult, lastMessagesResult, unreadResult] = await Promise.all([
+        supabase.from("chat_members").select("chat_id,user_id,role").in("chat_id", ids),
+        supabase.from("messages").select("chat_id,content,message_type,media_url,created_at,updated_at,deleted_at").in("chat_id", ids).order("created_at", { ascending: false }),
+        // Счётчик хранится не только в памяти: после перезагрузки страницы
+        // непрочитанные сообщения снова получают правильный бейдж.
+        supabase.from("messages").select("chat_id").in("chat_id", ids).neq("sender_id", userId).is("read_at", null).is("deleted_at", null)
+      ]);
 
-    const ids = rows.map(r => r.chat_id);
+      if (membersResult.error) throw membersResult.error;
+      if (lastMessagesResult.error) throw lastMessagesResult.error;
+      if (unreadResult.error) throw unreadResult.error;
 
-    const { data: allMembers, error: ce } = await supabase
-      .from("chat_members")
-      .select("chat_id,user_id,role")
-      .in("chat_id", ids);
-    if (ce) { setError(ce.message); return; }
+      const allMembers = membersResult.data || [];
+      const otherIds = [...new Set(
+        allMembers.filter((m: any) => m.user_id !== userId).map((m: any) => m.user_id)
+      )];
 
-    const otherIds = [...new Set(
-      (allMembers || [])
-        .filter((m: any) => m.user_id !== session.user.id)
-        .map((m: any) => m.user_id)
-    )];
+      let profileMap: Record<string, Profile> = {};
+      if (otherIds.length) {
+        const { data: ps, error: pe } = await supabase
+          .from("profiles")
+          .select("id,username,display_name,avatar_url,bio,online,last_seen")
+          .in("id", otherIds);
+        if (pe) throw pe;
+        for (const p of (ps || []) as Profile[]) profileMap[p.id] = p;
+      }
 
-    const profileMap: Record<string, Profile> = {};
-    if (otherIds.length) {
-      const { data: ps, error: pe } = await supabase
-        .from("profiles")
-        .select("id,username,display_name,avatar_url,bio,online,last_seen")
-        .in("id", otherIds);
-      if (pe) { setError(pe.message); return; }
-      for (const p of (ps || []) as Profile[]) profileMap[p.id] = p;
+      const lastByChat: Record<string, any> = {};
+      for (const m of (lastMessagesResult.data || []) as any[]) {
+        if (!lastByChat[m.chat_id]) lastByChat[m.chat_id] = m;
+      }
+
+      const unreadByChat: Record<string, number> = {};
+      for (const m of (unreadResult.data || []) as any[]) {
+        unreadByChat[m.chat_id] = (unreadByChat[m.chat_id] || 0) + 1;
+      }
+
+      const memberCountByChat: Record<string, number> = {};
+      for (const member of allMembers as any[]) {
+        memberCountByChat[member.chat_id] = (memberCountByChat[member.chat_id] || 0) + 1;
+      }
+
+      const result: Chat[] = rows.map((row: any) => {
+        const chatInfo = row.chats || {};
+        const other = allMembers.find((m: any) => m.chat_id === row.chat_id && m.user_id !== userId);
+        const p = other ? profileMap[other.user_id] : null;
+        const isDirect = (chatInfo.type || "direct") === "direct";
+        const name = isDirect
+          ? (p?.display_name || p?.username || "Пользователь")
+          : (chatInfo.title || "Группа");
+        const last = lastByChat[row.chat_id];
+
+        return {
+          id: row.chat_id,
+          name,
+          username: p?.username,
+          avatar_url: p?.avatar_url || chatInfo.avatar_url || null,
+          otherId: p?.id,
+          other: p,
+          last: last?.deleted_at ? "Сообщение удалено" : (last ? previewOf(last) : "Сообщений пока нет"),
+          time: timeOf(last?.created_at),
+          sortAt: last?.created_at || chatInfo.created_at,
+          unread: unreadByChat[row.chat_id] || 0,
+          type: chatInfo.type || "direct",
+          title: chatInfo.title || null,
+          created_by: chatInfo.created_by || null,
+          memberCount: memberCountByChat[row.chat_id] || (isDirect ? 2 : 1)
+        };
+      }).sort((a, b) => new Date(b.sortAt || 0).getTime() - new Date(a.sortAt || 0).getTime());
+
+      setChats(result);
+    } catch (e: any) {
+      console.error("Не удалось загрузить чаты:", e);
+      setError(e?.message || "Не удалось загрузить чаты");
+    } finally {
+      setChatsReady(true);
     }
-
-    const { data: lastMessages, error: le } = await supabase
-      .from("messages")
-      .select("chat_id,content,message_type,media_url,created_at,updated_at,deleted_at")
-      .in("chat_id", ids)
-      .order("created_at", { ascending: false });
-    if (le) { setError(le.message); return; }
-
-    const lastByChat: Record<string, any> = {};
-    for (const m of (lastMessages || []) as any[]) {
-      if (!lastByChat[m.chat_id]) lastByChat[m.chat_id] = m;
-    }
-
-    const memberCountByChat: Record<string, number> = {};
-    for (const member of (allMembers || []) as any[]) {
-      memberCountByChat[member.chat_id] = (memberCountByChat[member.chat_id] || 0) + 1;
-    }
-
-    const result: Chat[] = rows.map((row: any) => {
-      const chatInfo = row.chats || {};
-      const other = (allMembers || []).find(
-        (m: any) => m.chat_id === row.chat_id && m.user_id !== session.user.id
-      );
-      const p = other ? profileMap[other.user_id] : null;
-      const isDirect = (chatInfo.type || "direct") === "direct";
-      const chatTitle = chatInfo.title || "Группа";
-      const name = isDirect
-        ? (p?.display_name || p?.username || "Пользователь")
-        : chatTitle;
-      const last = lastByChat[row.chat_id];
-
-      return {
-        id: row.chat_id,
-        name,
-        username: p?.username,
-        avatar_url: p?.avatar_url || chatInfo.avatar_url || null,
-        otherId: p?.id,
-        other: p,
-        last: last?.deleted_at
-          ? "Сообщение удалено"
-          : (last ? previewOf(last) : "Сообщений пока нет"),
-        time: timeOf(last?.created_at),
-        sortAt: last?.created_at || chatInfo.created_at,
-        type: chatInfo.type || "direct",
-        title: chatInfo.title || null,
-        created_by: chatInfo.created_by || null,
-        memberCount: memberCountByChat[row.chat_id] || (isDirect ? 2 : 1)
-      };
-    }).sort((a, b) => new Date(b.sortAt || 0).getTime() - new Date(a.sortAt || 0).getTime());
-
-    setChats(result);
   }
 
   async function loadMessages(chatId: string) {
@@ -594,8 +606,9 @@ export default function App() {
           {peopleSearched && !visiblePeople.length && <div className="people-search-hint"><Search size={28}/><b>Пользователь не найден</b><span>Проверьте username и попробуйте ещё раз.</span></div>}
           {visiblePeople.map(p => <button className="person" key={p.id} onClick={() => startChat(p)}><Avatar p={p}/><span><b>{p.display_name}</b><small>@{p.username}</small><small className={p.online ? "online-text" : ""}>{p.online ? "● В сети" : p.last_seen ? `Был(а) ${dateOf(p.last_seen)} в ${timeOf(p.last_seen)}` : "Не в сети"}</small></span><Plus size={17}/></button>)}
         </div>}
-        {section === "chats" && chats.map(chat => <button className={`person chat-row ${selected?.id === chat.id ? "chat-selected" : ""}`} key={chat.id} onClick={() => { setSelected(chat); setSection("chats"); }}><Avatar p={chat.other || { id: chat.otherId || chat.id, username: "", display_name: chat.name, avatar_url: chat.avatar_url }}/><span><b>{chat.name}</b>{chat.username && <small>@{chat.username}</small>}<small>{chat.last}</small></span>{chat.unread ? <strong className="unread-badge">{chat.unread}</strong> : chat.time && <small className="row-time">{chat.time}</small>}</button>)}
-        {section === "chats" && chats.length === 0 && <div className="empty"><MessageCircle size={35}/><b>Нет открытых чатов</b><span>Найдите пользователя и начните разговор</span><button className="primary compact" onClick={() => setSection("people")}>Найти людей</button></div>}
+        {section === "chats" && !chatsReady && <div className="chat-list-loading"><i/><i/><i/><span>Загружаем чаты…</span></div>}
+        {section === "chats" && chatsReady && chats.map(chat => <button className={`person chat-row ${selected?.id === chat.id ? "chat-selected" : ""}`} key={chat.id} onClick={() => { setSelected(chat); setSection("chats"); }}><Avatar p={chat.other || { id: chat.otherId || chat.id, username: "", display_name: chat.name, avatar_url: chat.avatar_url }}/><span><b>{chat.name}</b>{chat.username && <small>@{chat.username}</small>}<small>{chat.last}</small></span>{chat.unread ? <strong className="unread-badge">{chat.unread}</strong> : chat.time && <small className="row-time">{chat.time}</small>}</button>)}
+        {section === "chats" && chatsReady && chats.length === 0 && <div className="empty"><MessageCircle size={35}/><b>Нет открытых чатов</b><span>Найдите пользователя и начните разговор</span><button className="primary compact" onClick={() => setSection("people")}>Найти людей</button></div>}
         {section === "settings" && <SettingsPanel dark={dark} setDark={setDark} notifications={notifications} requestNotifications={requestNotifications} setNotifications={(v: boolean) => { setNotifications(v); localStorage.setItem("groza-notifications", v ? "on" : "off"); }} installEvent={installEvent} logout={logout} userId={session.user.id}/>}      
       </div>
 

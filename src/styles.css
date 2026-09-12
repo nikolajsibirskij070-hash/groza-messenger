@@ -451,3 +451,9 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
   .chat-head{padding-left:28px;padding-right:28px}
   .messages{padding-left:8%;padding-right:8%}
 }
+
+/* v25: загрузка списка без ложного состояния «Нет чатов» */
+.chat-list-loading{padding:22px 18px;display:flex;flex-direction:column;gap:12px;color:var(--muted)}
+.chat-list-loading i{display:block;height:62px;border-radius:16px;background:linear-gradient(90deg,var(--panel2),var(--hover),var(--panel2));background-size:200% 100%;animation:chatShimmer 1.1s infinite linear}
+.chat-list-loading span{text-align:center;font-size:12px;margin-top:2px}
+@keyframes chatShimmer{to{background-position:-200% 0}}
