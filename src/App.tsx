@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search, MessageCircle, Users, Settings, Plus, Send, Paperclip, Smile, Mic,
   ArrowLeft, MoreVertical, LogOut, Sun, Moon, Pencil, Trash2, Check, X,
-  Bell, BellOff, Download, Wifi, WifiOff, Circle, UserX, Ban, ShieldBan, UserRoundPen, Reply, Copy, Heart, ThumbsUp, Laugh, Eye, CheckCheck, Palette, Lock, UserRound, XCircle, SlidersHorizontal, BarChart3, Image as ImageIcon, Video, FileText, Link as LinkIcon, UserPlus, SearchX, VolumeX, Volume2, ChevronDown
+  Bell, BellOff, Download, Wifi, WifiOff, Circle, UserX, Ban, ShieldBan, UserRoundPen, Reply, Copy, Heart, ThumbsUp, Laugh, Eye, CheckCheck, Palette, Lock, UserRound, XCircle, SlidersHorizontal, BarChart3, Image as ImageIcon, Video, FileText, Link as LinkIcon, UserPlus, SearchX, VolumeX, Volume2, ChevronDown, Play, Pause, Trash, LockKeyhole, Square
 } from "lucide-react";
 import { supabase, configured } from "./lib/supabase";
 
@@ -769,9 +769,14 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
   const [showJump, setShowJump] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  const [recordLocked, setRecordLocked] = useState(false);
+  const [voicePreview, setVoicePreview] = useState<{blob:Blob,url:string,duration:number}|null>(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordChunksRef = useRef<Blob[]>([]);
   const recordStartedRef = useRef(0);
+  const recordStreamRef = useRef<MediaStream | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const isCreator = selected.type === "group" && selected.created_by === sessionId;
   // Черновики сохраняются отдельно для каждого чата и не теряются при выходе.
   useEffect(() => { setText(localStorage.getItem(`groza-draft-${selected.id}`) || ""); }, [selected.id]);
@@ -783,47 +788,51 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
   const replyMessage = replyTo ? messages.find((x:Message)=>x.id===replyTo.reply_to_id) : null;
   const filteredMessages = messageQuery.trim() ? messages.filter((m:Message)=>String(m.content||"").toLowerCase().includes(messageQuery.trim().toLowerCase())) : messages;
   const toggleMute = () => { const next=!muted; setMuted(next); localStorage.setItem(`groza-muted-${selected.id}`, next?"1":"0"); setMenuOpen(false); };
+  const formatVoiceTime = (sec:number) => `${Math.floor(sec/60)}:${String(sec%60).padStart(2,"0")}`;
+  const cleanupPreview = () => {
+    setVoicePreview(prev => { if (prev?.url) URL.revokeObjectURL(prev.url); return null; });
+    setPreviewPlaying(false);
+  };
   const startVoice = async () => {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { alert("Голосовые сообщения не поддерживаются этим браузером."); return; }
+    cleanupPreview();
     try {
-      // Высокое качество и совместимость с iPhone/Android.
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-          sampleRate: 48000,
-          sampleSize: 16
-        }
-      });
-      const supports = (type: string) => typeof MediaRecorder.isTypeSupported === "function" && MediaRecorder.isTypeSupported(type);
-      const preferred = [
-        "audio/mp4;codecs=mp4a.40.2",
-        "audio/mp4",
-        "audio/webm;codecs=opus",
-        "audio/webm",
-        "audio/ogg;codecs=opus"
-      ].find(supports);
-      const options: MediaRecorderOptions = { audioBitsPerSecond: 128000 };
-      if (preferred) options.mimeType = preferred;
-      const rec = new MediaRecorder(stream, options);
-      recordChunksRef.current=[]; recordStartedRef.current=Date.now(); setRecordSeconds(0);
-      rec.ondataavailable=(e)=>{ if(e.data.size) recordChunksRef.current.push(e.data); };
-      rec.onerror=(e:any)=>{ console.error("VOICE RECORDER:", e); setRecording(false); stream.getTracks().forEach(t=>t.stop()); };
-      rec.onstop=async()=>{
-        stream.getTracks().forEach(t=>t.stop());
-        const sec=(Date.now()-recordStartedRef.current)/1000;
-        setRecording(false); setRecordSeconds(0);
-        const fallback = preferred?.includes("mp4") ? "audio/mp4" : "audio/webm";
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1, sampleRate:48000, sampleSize:16 } });
+      recordStreamRef.current = stream;
+      const supports=(type:string)=>typeof MediaRecorder.isTypeSupported==="function"&&MediaRecorder.isTypeSupported(type);
+      const preferred=["audio/mp4;codecs=mp4a.40.2","audio/mp4","audio/webm;codecs=opus","audio/webm","audio/ogg;codecs=opus"].find(supports);
+      const options:MediaRecorderOptions={audioBitsPerSecond:128000}; if(preferred) options.mimeType=preferred;
+      const rec=new MediaRecorder(stream,options);
+      recordChunksRef.current=[]; recordStartedRef.current=Date.now(); setRecordSeconds(0); setRecordLocked(false);
+      rec.ondataavailable=(e)=>{if(e.data.size)recordChunksRef.current.push(e.data)};
+      rec.onerror=(e:any)=>{console.error("VOICE RECORDER:",e);setRecording(false);recordStreamRef.current?.getTracks().forEach(t=>t.stop());recordStreamRef.current=null};
+      rec.onstop=()=>{
+        recordStreamRef.current?.getTracks().forEach(t=>t.stop()); recordStreamRef.current=null;
+        const duration=Math.max(1,Math.round((Date.now()-recordStartedRef.current)/1000));
+        const fallback=preferred?.includes("mp4")?"audio/mp4":"audio/webm";
         const blob=new Blob(recordChunksRef.current,{type:rec.mimeType||preferred||fallback});
-        if(blob.size>500) await sendVoice(blob,sec);
+        setRecording(false); setRecordLocked(false); setRecordSeconds(duration);
+        if(blob.size>500) setVoicePreview({blob,url:URL.createObjectURL(blob),duration});
       };
       recorderRef.current=rec; rec.start(250); setRecording(true);
-    } catch(e) { console.error(e); alert("Не удалось получить доступ к микрофону. Разрешите доступ к микрофону в браузере."); }
+    } catch(e){console.error(e);alert("Не удалось получить доступ к микрофону. Разрешите доступ к микрофону в браузере.")}
   };
-  const stopVoice = () => { if(recorderRef.current?.state==="recording") recorderRef.current.stop(); };
+  const finishVoice = () => { if(recorderRef.current?.state==="recording") recorderRef.current.stop(); };
+  const cancelVoice = () => {
+    if(recorderRef.current?.state==="recording"){ recorderRef.current.onstop=null; recorderRef.current.stop(); }
+    recordStreamRef.current?.getTracks().forEach(t=>t.stop()); recordStreamRef.current=null;
+    recordChunksRef.current=[]; setRecording(false); setRecordLocked(false); setRecordSeconds(0); cleanupPreview();
+  };
+  const togglePreview = async () => {
+    const a=previewAudioRef.current; if(!a)return;
+    if(a.paused){ await a.play(); setPreviewPlaying(true); } else { a.pause(); setPreviewPlaying(false); }
+  };
+  const sendPreviewVoice = async () => {
+    if(!voicePreview)return;
+    const {blob,duration}=voicePreview; cleanupPreview(); await sendVoice(blob,duration); setRecordSeconds(0);
+  };
   useEffect(()=>{ if(!recording)return; const id=window.setInterval(()=>setRecordSeconds(Math.max(1,Math.floor((Date.now()-recordStartedRef.current)/1000))),500); return()=>window.clearInterval(id); },[recording]);
+  useEffect(()=>()=>{ if(voicePreview?.url) URL.revokeObjectURL(voicePreview.url); },[]);
   return <section className="chat">
     <header className="chat-head">
       <button className="icon-btn back" onClick={back}><ArrowLeft/></button>
@@ -835,7 +844,18 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
     <div className="messages" ref={scrollRef} onScroll={onMessagesScroll}>{filteredMessages.length ? filteredMessages.map((m:Message)=><MessageBubble key={m.id} m={m} mine={m.sender_id===sessionId} messages={messages} onOpenPhoto={onOpenPhoto} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} onReply={setReplyTo} reactions={reactions[m.id]||[]} toggleReaction={toggleReaction} copyText={copyText} senderProfile={senderProfiles?.[m.sender_id]} isGroup={selected.type==="group"} togglePin={togglePin} isPinned={pinnedIds?.has(m.id)}/>) : <div className="chat-empty">{messageQuery?"Ничего не найдено":"Сообщений пока нет"}</div>}</div>
     {replyTo&&<div className="reply-bar"><Reply size={17}/><span><b>Ответ</b><small>{replyTo.content}</small></span><button onClick={()=>setReplyTo(null)}><X size={18}/></button></div>}
     {showJump&&<button className="jump-latest" onClick={jumpToLatest} title="К последним сообщениям"><ChevronDown size={22}/><span>Новые сообщения</span></button>}
-    <div className="composer"><input id="groza-photo-input" className="photo-input" type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)sendPhoto(file);e.currentTarget.value=""}}/><input id="groza-file-input" className="photo-input" type="file" onChange={e=>{const file=e.target.files?.[0];if(file)sendFile(file);e.currentTarget.value=""}}/><div className="attach-wrap"><button type="button" className={`icon-btn photo-label ${(uploadingPhoto||uploadingFile)?"disabled":""}`} onClick={()=>{const menu=document.getElementById("groza-attach-menu");menu?.classList.toggle("open")}}><Paperclip/></button><div id="groza-attach-menu" className="attach-menu"><label htmlFor="groza-photo-input">Фото</label><label htmlFor="groza-file-input">Файл</label></div></div><input value={text} onChange={e=>{updateDraft(e.target.value);sendTyping(!!e.target.value)}} onBlur={()=>sendTyping(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendWithDraft()}}} placeholder={uploadingPhoto?"Отправляем фото...":"Сообщение"} disabled={uploadingPhoto}/>{text.trim()?<button className="send" onClick={sendWithDraft}><Send/></button>:recording?<button className="voice-stop" onClick={stopVoice} title="Остановить и отправить"><span className="record-dot"/> {recordSeconds || 0}:00</button>:<button className="icon-btn mic-btn" onClick={startVoice} title="Записать голосовое"><Mic/></button>}</div>
+    {recording ? <div className={`voice-recording ${recordLocked?"locked":""}`}>
+      <button className="voice-trash" onClick={cancelVoice} title="Удалить запись"><Trash2 size={23}/></button>
+      <div className="voice-record-status"><span className="record-dot"/><b>{formatVoiceTime(recordSeconds)}</b><small>{recordLocked?"Запись зафиксирована":"Запись голосового сообщения"}</small></div>
+      <button className={`voice-lock ${recordLocked?"on":""}`} onClick={()=>setRecordLocked(v=>!v)} title="Зафиксировать запись"><LockKeyhole size={22}/></button>
+      <button className="voice-finish" onClick={finishVoice} title="Остановить и прослушать"><Square size={19}/></button>
+    </div> : voicePreview ? <div className="voice-preview">
+      <button className="voice-trash" onClick={cleanupPreview} title="Удалить"><Trash2 size={23}/></button>
+      <button className="voice-play" onClick={togglePreview}>{previewPlaying?<Pause size={22}/>:<Play size={22}/>}</button>
+      <div className="voice-wave"><div className="voice-wave-line"/><b>{formatVoiceTime(voicePreview.duration)}</b><small>Прослушайте перед отправкой</small></div>
+      <audio ref={previewAudioRef} src={voicePreview.url} onEnded={()=>setPreviewPlaying(false)} onPause={()=>setPreviewPlaying(false)} onPlay={()=>setPreviewPlaying(true)} preload="metadata"/>
+      <button className="voice-send" onClick={sendPreviewVoice} title="Отправить"><Send size={24}/></button>
+    </div> : <div className="composer"><input id="groza-photo-input" className="photo-input" type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)sendPhoto(file);e.currentTarget.value=""}}/><input id="groza-file-input" className="photo-input" type="file" onChange={e=>{const file=e.target.files?.[0];if(file)sendFile(file);e.currentTarget.value=""}}/><div className="attach-wrap"><button type="button" className={`icon-btn photo-label ${(uploadingPhoto||uploadingFile)?"disabled":""}`} onClick={()=>{const menu=document.getElementById("groza-attach-menu");menu?.classList.toggle("open")}}><Paperclip/></button><div id="groza-attach-menu" className="attach-menu"><label htmlFor="groza-photo-input">Фото</label><label htmlFor="groza-file-input">Файл</label></div></div><input value={text} onChange={e=>{updateDraft(e.target.value);sendTyping(!!e.target.value)}} onBlur={()=>sendTyping(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendWithDraft()}}} placeholder={uploadingPhoto?"Отправляем фото...":"Сообщение"} disabled={uploadingPhoto}/>{text.trim()?<button className="send" onClick={sendWithDraft}><Send/></button>:<button className="icon-btn mic-btn" onClick={startVoice} title="Записать голосовое"><Mic/></button>}</div>}
     {pollOpen&&<PollCreator onClose={()=>setPollOpen(false)} onCreate={(q:string,o:string[])=>{createPoll(q,o);setPollOpen(false)}}/>}
     {groupManageOpen&&isCreator&&<GroupManager chat={selected} userId={sessionId} onClose={()=>setGroupManageOpen(false)}/>}
     {groupInfoOpen&&<GroupInfo chat={selected} onClose={()=>setGroupInfoOpen(false)}/>}
