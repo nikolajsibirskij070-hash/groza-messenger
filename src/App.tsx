@@ -781,17 +781,21 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
   // Черновики сохраняются отдельно для каждого чата и не теряются при выходе.
   useEffect(() => { setText(localStorage.getItem(`groza-draft-${selected.id}`) || ""); }, [selected.id]);
   useEffect(() => {
-    // После отправки или удаления сообщения всегда возвращаем список к актуальному нижнему краю.
-    const id = requestAnimationFrame(() => {
+    // После добавления/удаления сообщения DOM и высота списка могут меняться несколько кадров.
+    // Ставим прокрутку в самый низ после layout и повторяем после следующего кадра.
+    let raf1 = 0, raf2 = 0;
+    const scrollToRealBottom = () => {
       const el = scrollRef.current;
-      if (el) {
-        // Два кадра подряд: DOM успевает убрать удалённый элемент и список точно встаёт в самый низ.
-        el.scrollTop = el.scrollHeight;
-        requestAnimationFrame(()=>{ el.scrollTop = el.scrollHeight; });
-      }
-    });
-    return () => cancelAnimationFrame(id);
-  }, [messages]);
+      if (!el) return;
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      raf2 = requestAnimationFrame(() => {
+        const current = scrollRef.current;
+        if (current) current.scrollTop = Math.max(0, current.scrollHeight - current.clientHeight);
+      });
+    };
+    raf1 = requestAnimationFrame(scrollToRealBottom);
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+  }, [messages, messageQuery]);
   const updateDraft = (value:string) => { setText(value); const key=`groza-draft-${selected.id}`; if(value.trim()) localStorage.setItem(key,value); else localStorage.removeItem(key); };
   const sendWithDraft = async () => { const key=`groza-draft-${selected.id}`; await send(); localStorage.removeItem(key); };
   const onMessagesScroll = () => { const el=scrollRef.current; if(!el)return; setShowJump(el.scrollHeight-el.scrollTop-el.clientHeight>220); };

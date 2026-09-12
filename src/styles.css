@@ -572,3 +572,70 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
 .voice-message.compact-voice .voice-bubble-mic{width:16px;height:16px;opacity:.92}
 .messages{overflow-anchor:none}
 @media(max-width:700px){.voice-message.compact-voice{width:min(305px,76vw);height:56px}.voice-message.compact-voice .voice-bubble-play{width:40px;height:40px;min-width:40px}}
+
+
+/* v40 — ГРОЗА: собственный компактный дизайн голосовых, полностью от темы */
+.voice-message.compact-voice{
+  width:min(320px,76vw)!important;
+  min-width:0!important;
+  height:62px!important;
+  padding:8px 11px!important;
+  gap:9px!important;
+  flex-wrap:nowrap!important;
+  border-radius:19px 19px 6px 19px!important;
+  background:linear-gradient(135deg,
+    color-mix(in srgb,var(--mine) 86%,var(--accent) 14%),
+    var(--mine))!important;
+  border:1px solid color-mix(in srgb,var(--line) 72%,var(--accent) 28%)!important;
+  color:var(--text)!important;
+  box-shadow:0 7px 20px rgba(0,0,0,.16)!important;
+  overflow:hidden;
+}
+.bubble-row:not(.mine) .voice-message.compact-voice{
+  background:var(--panel2)!important;
+  border-color:var(--line)!important;
+  border-radius:19px 19px 19px 6px!important;
+}
+.voice-message.compact-voice .voice-bubble-play{
+  width:42px!important;
+  height:42px!important;
+  min-width:42px!important;
+  border-radius:14px!important;
+  background:var(--accent)!important;
+  color:var(--accentText)!important;
+  box-shadow:none!important;
+  transition:transform .16s ease,filter .16s ease;
+}
+.voice-message.compact-voice .voice-bubble-play:active{transform:scale(.92);filter:brightness(.92)}
+.voice-message.compact-voice .voice-bubble-main{gap:4px!important;min-width:0}
+.voice-message.compact-voice .voice-bars{
+  height:23px!important;
+  display:flex!important;
+  align-items:center!important;
+  gap:2px!important;
+  padding:0 1px!important;
+}
+.voice-message.compact-voice .voice-bars i{
+  width:2px!important;
+  min-width:2px!important;
+  max-height:21px!important;
+  background:color-mix(in srgb,var(--accent) 82%,var(--text) 18%)!important;
+  border-radius:99px!important;
+  opacity:.92!important;
+}
+.voice-message.compact-voice .voice-bubble-meta{
+  color:var(--muted)!important;
+  font-size:11px!important;
+  gap:5px!important;
+}
+.voice-message.compact-voice .voice-bubble-meta b{
+  color:var(--text)!important;
+  font-size:12px!important;
+  font-weight:750!important;
+}
+.voice-message.compact-voice .voice-bubble-meta em{color:var(--muted)!important;font-size:11px!important}
+.voice-message.compact-voice .voice-bubble-mic{color:var(--accent)!important;opacity:.95!important;width:17px!important;height:17px!important}
+@media(max-width:560px){
+  .voice-message.compact-voice{width:min(310px,78vw)!important;height:60px!important;padding:8px 10px!important}
+  .voice-message.compact-voice .voice-bubble-play{width:40px!important;height:40px!important;min-width:40px!important}
+}
