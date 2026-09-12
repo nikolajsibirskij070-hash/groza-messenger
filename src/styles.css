@@ -477,3 +477,24 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
 .group-profile-members-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 10px;border-top:6px solid var(--bg);color:var(--muted)}.group-profile-members-head>div{display:flex;align-items:center;gap:10px}.group-profile-members-head b{font-size:12px;letter-spacing:.04em}
 .group-profile-members{padding:0 14px 18px;display:grid;gap:3px}.group-profile-member{display:flex;align-items:center;gap:11px;padding:10px 6px;border-radius:12px}.group-profile-member:hover{background:var(--hover)}.group-profile-member span{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}.group-profile-member small{color:var(--muted);font-size:11px}.group-profile-member b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:760px){.group-profile-backdrop{padding:0;align-items:end}.group-profile-sheet{width:100%;max-height:88dvh;border-radius:24px 24px 0 0;border-bottom:0}.group-profile-hero{padding-top:26px}.group-profile-actions{padding-bottom:16px}}
+
+/* v27: chat actions menu must always stay above message bubbles */
+.chat-head{
+  position:relative;
+  z-index:1000;
+  overflow:visible;
+}
+.chat-menu-wrap{z-index:1001}
+.chat-menu{
+  z-index:1002!important;
+  isolation:isolate;
+}
+.messages{
+  position:relative;
+  z-index:1;
+}
+.composer,.reply-bar{position:relative;z-index:2}
+@media (max-width:760px){
+  .chat-head{z-index:1000!important;overflow:visible!important}
+  .chat-menu{z-index:1002!important}
+}
