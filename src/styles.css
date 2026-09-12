@@ -526,3 +526,9 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
 .bubble{
   -webkit-tap-highlight-color:transparent;
 }
+/* v34: черновики и быстрый переход к новым сообщениям */
+.jump-latest{position:absolute;right:18px;bottom:88px;z-index:7;border:1px solid rgba(170,145,255,.45);background:rgba(35,38,50,.96);color:#eee;border-radius:22px;padding:9px 13px;display:flex;align-items:center;gap:7px;box-shadow:0 10px 30px rgba(0,0,0,.28);backdrop-filter:blur(12px);animation:grozaPop .18s ease-out;font-size:13px;font-weight:700}
+.jump-latest:hover{transform:translateY(-1px)}
+@keyframes grozaPop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
+.chat{position:relative}
+@media(max-width:640px){.jump-latest{right:16px;bottom:94px}.jump-latest span{display:none}.jump-latest{width:48px;height:48px;padding:0;justify-content:center;border-radius:50%}}
