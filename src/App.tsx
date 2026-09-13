@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   Search, MessageCircle, Users, Settings, Plus, Send, Paperclip, Smile, Mic,
   ArrowLeft, MoreVertical, LogOut, Sun, Moon, Pencil, Trash2, Check, X,
@@ -547,31 +546,11 @@ export default function App() {
   }
 
   async function createPoll(question:string, options:string[]) {
-    if (!supabase || !selected || selected.type !== "group" || !session?.user?.id) {
-      setError("Опросы можно создавать только в группах.");
-      return false;
-    }
-    const cleanQuestion = question.trim();
-    const cleanOptions = options.map(x=>x.trim()).filter(Boolean);
-    if (!cleanQuestion || cleanOptions.length < 2) {
-      setError("Укажите вопрос и минимум 2 варианта.");
-      return false;
-    }
-    const payload = JSON.stringify({question:cleanQuestion, options:cleanOptions});
-    const {data,error:e}=await supabase.from("messages").insert({
-      chat_id:selected.id,
-      sender_id:session.user.id,
-      content:payload,
-      message_type:"poll"
-    }).select().single();
-    if(e){setError(`Не удалось создать опрос: ${e.message}`);return false;}
-    if(data){
-      const m=data as Message;
-      setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
-      updateChatPreview(m.chat_id,"📊 Опрос",m.created_at);
-      await sendPush(m.chat_id,m);
-    }
-    return !!data;
+    if (!supabase || !selected || selected.type!=="group" || !session?.user?.id) return;
+    const payload = JSON.stringify({question, options: options.filter(Boolean)});
+    const {data,error:e}=await supabase.from("messages").insert({chat_id:selected.id,sender_id:session.user.id,content:payload,message_type:"poll"}).select().single();
+    if(e){setError(e.message);return;}
+    if(data){const m=data as Message; setMessages(prev=>[...prev,m]); updateChatPreview(m.chat_id,"📊 Опрос",m.created_at);}
   }
 
   async function toggleReaction(messageId: string, emoji: string) {
@@ -849,14 +828,6 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
   const sendWithDraft = async () => { const key=`groza-draft-${selected.id}`; await send(); localStorage.removeItem(key); };
   const onMessagesScroll = () => { const el=scrollRef.current; if(!el)return; setShowJump(el.scrollHeight-el.scrollTop-el.clientHeight>220); };
   const jumpToLatest = () => scrollRef.current?.scrollTo({top:scrollRef.current.scrollHeight,behavior:"smooth"});
-  const jumpToMessage = (messageId:string) => {
-    const el = document.getElementById(`groza-message-${messageId}`);
-    if (el) {
-      el.scrollIntoView({ behavior:"smooth", block:"center" });
-      el.classList.add("pinned-message-highlight");
-      window.setTimeout(() => el.classList.remove("pinned-message-highlight"), 1800);
-    }
-  };
   const replyMessage = replyTo ? messages.find((x:Message)=>x.id===replyTo.reply_to_id) : null;
   const visibleMessages = messages.filter((m:Message)=>!m.deleted_at);
   const filteredMessages = messageQuery.trim() ? visibleMessages.filter((m:Message)=>String(m.content||"").toLowerCase().includes(messageQuery.trim().toLowerCase())) : visibleMessages;
@@ -912,7 +883,7 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
       <button className="profile-hit" onClick={()=>selected.type==="group"?setGroupInfoOpen(true):setProfileOpen(true)}><Avatar p={selected.other || { id:selected.otherId||selected.id, display_name:selected.name, avatar_url:selected.avatar_url }}/><div className="chat-title"><b>{selected.name}</b><small className={selected.other?.online ? "online-text" : ""}>{selected.type === "group" ? `${selected.memberCount || 1} участников` : (otherTyping ? "печатает..." : selected.other?.online ? "В сети" : "был(а) недавно")}</small></div></button>
       <div className="chat-menu-wrap"><button className="icon-btn" onClick={()=>setMenuOpen(v=>!v)}><MoreVertical/></button>{menuOpen&&<div className="chat-menu">{selected.type==="group"&&isCreator&&<button onClick={()=>{setMenuOpen(false);setGroupManageOpen(true)}}><Users size={17}/>Управление группой</button>}{selected.type==="group"&&<button onClick={()=>{setMenuOpen(false);setPollOpen(true)}}><BarChart3 size={17}/>Создать опрос</button>}<button onClick={()=>{setMenuOpen(false);setMessageSearchOpen(true)}}><Search size={17}/>Поиск сообщений</button><button onClick={toggleMute}>{muted?<><Volume2 size={17}/>Включить звук</>:<><VolumeX size={17}/>Без звука</>}</button><button onClick={()=>{setMenuOpen(false);deleteChat(selected)}}><Trash2 size={17}/>Удалить чат</button>{selected.type!=="group"&&<button className="danger-item" onClick={()=>{setMenuOpen(false);blockUser(selected)}}><Ban size={17}/>Заблокировать</button>}</div>}</div>
     </header>
-    {pinned?.length>0&&<div className="pinned-bar" onClick={()=>jumpToMessage(pinned[0].id)} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==="Enter"||e.key===" ")jumpToMessage(pinned[0].id)}}><span>📌</span><div><b>Закреплённое сообщение{pinned.length>1?` (${pinned.length})`:""}</b><small>{pinned[0]?.message_type==="poll"?"📊 Опрос":pinned[0]?.content}</small></div><button className="pinned-unpin" onClick={e=>{e.stopPropagation();togglePin(pinned[0])}} title="Открепить сообщение">✕</button></div>}
+    {pinned?.length>0&&<div className="pinned-bar"><span>📌</span><div><b>Закреплённое сообщение{pinned.length>1?` (${pinned.length})`:""}</b><small>{pinned[0]?.content?.startsWith("{")?"📊 Опрос":pinned[0]?.content}</small></div><button className="pinned-unpin" onClick={()=>togglePin(pinned[0])} title="Открепить сообщение">✕</button></div>}
     {messageSearchOpen&&<div className="message-search-bar"><Search size={18}/><input autoFocus value={messageQuery} onChange={e=>setMessageQuery(e.target.value)} placeholder="Поиск по сообщениям"/><button onClick={()=>{setMessageSearchOpen(false);setMessageQuery("")}}><X size={18}/></button></div>}
     <div className="messages" ref={scrollRef} onScroll={onMessagesScroll}>{filteredMessages.length ? filteredMessages.map((m:Message)=><MessageBubble key={m.id} m={m} mine={m.sender_id===sessionId} messages={messages} onOpenPhoto={onOpenPhoto} editingId={editingId} setEditingId={setEditingId} editingText={editingText} setEditingText={setEditingText} saveEdit={saveEdit} deleteMessage={deleteMessage} onReply={setReplyTo} reactions={reactions[m.id]||[]} toggleReaction={toggleReaction} copyText={copyText} senderProfile={senderProfiles?.[m.sender_id]} isGroup={selected.type==="group"} togglePin={togglePin} isPinned={pinnedIds?.has(m.id)}/>) : <div className="chat-empty">{messageQuery?"Ничего не найдено":"Сообщений пока нет"}</div>}</div>
     {replyTo&&<div className="reply-bar"><Reply size={17}/><span><b>Ответ</b><small>{replyTo.content}</small></span><button onClick={()=>setReplyTo(null)}><X size={18}/></button></div>}
@@ -929,7 +900,7 @@ function ChatView({ selected, messages, text, setText, send, sendPhoto, sendFile
       <audio ref={previewAudioRef} src={voicePreview.url} onEnded={()=>setPreviewPlaying(false)} onPause={()=>setPreviewPlaying(false)} onPlay={()=>setPreviewPlaying(true)} preload="metadata"/>
       <button className="voice-send" onClick={sendPreviewVoice} title="Отправить"><Send size={24}/></button>
     </div> : <div className="composer"><input id="groza-photo-input" className="photo-input" type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)sendPhoto(file);e.currentTarget.value=""}}/><input id="groza-file-input" className="photo-input" type="file" onChange={e=>{const file=e.target.files?.[0];if(file)sendFile(file);e.currentTarget.value=""}}/><div className="attach-wrap"><button type="button" className={`icon-btn photo-label ${(uploadingPhoto||uploadingFile)?"disabled":""}`} onClick={()=>{const menu=document.getElementById("groza-attach-menu");menu?.classList.toggle("open")}}><Paperclip/></button><div id="groza-attach-menu" className="attach-menu"><label htmlFor="groza-photo-input">Фото</label><label htmlFor="groza-file-input">Файл</label></div></div><input value={text} onChange={e=>{updateDraft(e.target.value);sendTyping(!!e.target.value)}} onBlur={()=>sendTyping(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendWithDraft()}}} placeholder={uploadingPhoto?"Отправляем фото...":"Сообщение"} disabled={uploadingPhoto}/>{text.trim()?<button className="send" onClick={sendWithDraft}><Send/></button>:<button className="icon-btn mic-btn" onClick={startVoice} title="Записать голосовое"><Mic/></button>}</div>}
-    {pollOpen&&<PollCreator onClose={()=>setPollOpen(false)} onCreate={async(q:string,o:string[])=>{await createPoll(q,o);setPollOpen(false)}}/>}
+    {pollOpen&&<PollCreator onClose={()=>setPollOpen(false)} onCreate={(q:string,o:string[])=>{createPoll(q,o);setPollOpen(false)}}/>}
     {groupManageOpen&&isCreator&&<GroupManager chat={selected} userId={sessionId} onClose={()=>setGroupManageOpen(false)}/>}
     {groupInfoOpen&&<GroupInfo chat={selected} onClose={()=>setGroupInfoOpen(false)}/>}
     {profileOpen&&<div className="modal-backdrop" onClick={()=>setProfileOpen(false)}><div className="user-profile-modal" onClick={e=>e.stopPropagation()}><button className="modal-x" onClick={()=>setProfileOpen(false)}><X/></button><Avatar p={selected.other || {id:selected.otherId||selected.id,display_name:selected.name,avatar_url:selected.avatar_url}}/><h2>{selected.name}</h2><b>@{selected.other?.username||"user"}</b><p>{selected.other?.bio||"Пользователь ГРОЗЫ"}</p><span className="online-text">{selected.other?.online?"● В сети":"Был(а) недавно"}</span></div></div>}
@@ -1025,10 +996,10 @@ function MessageBubble({m,mine,messages,onOpenPhoto,editingId,setEditingId,editi
  const startHold=()=>{if(deleted||editingId===m.id)return; if(holdTimer.current)clearTimeout(holdTimer.current);holdTimer.current=window.setTimeout(()=>{setMenuOpen(true);navigator.vibrate?.(12)},520)};
  const cancelHold=()=>{if(holdTimer.current){clearTimeout(holdTimer.current);holdTimer.current=null}};
  const grouped=reactions.reduce((a:any,r:any)=>{(a[r.emoji]||=[]).push(r);return a},{});
- return <div id={`groza-message-${m.id}`} className={`bubble-row ${mine?"mine":""}`}><div className="bubble-wrap"><div className={`bubble ${deleted?"deleted":""} ${m.message_type==="image"&&!deleted?"photo-bubble":""}`} onPointerDown={startHold} onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold} onContextMenu={e=>{e.preventDefault();setMenuOpen(true)}}>
+ return <div className={`bubble-row ${mine?"mine":""}`}><div className="bubble-wrap"><div className={`bubble ${deleted?"deleted":""} ${m.message_type==="image"&&!deleted?"photo-bubble":""}`} onPointerDown={startHold} onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold} onContextMenu={e=>{e.preventDefault();setMenuOpen(true)}}>
  {editingId===m.id?<div className="edit-box"><textarea value={editingText} onChange={e=>setEditingText(e.target.value)} autoFocus/><div><button onClick={()=>saveEdit(m.id)}><Check size={15}/>Сохранить</button><button onClick={()=>setEditingId(null)}><X size={15}/>Отмена</button></div></div>:<>{isGroup&&!mine&&<div className="group-message-author"><Avatar p={senderProfile||{id:m.sender_id,display_name:"Пользователь",username:""}}/><b>{senderProfile?.display_name||senderProfile?.username||"Пользователь"}</b></div>}{reply&&<div className="reply-preview"><Reply size={13}/><span><b>{reply.sender_id===m.sender_id?"Сообщение":"Ответ"}</b>{reply.content}</span></div>}{m.message_type==="poll"?<PollCard message={m}/>:m.message_type==="image"&&m.media_url?<button className="photo-message" onClick={()=>onOpenPhoto(m.media_url)}><img src={m.media_url} alt="Фотография"/></button>:String(m.media_type||"").startsWith("audio/")&&m.media_url?<VoiceMessage src={m.media_url} label={m.content} durationHint={m.media_duration}/>:m.message_type==="file"&&m.media_url?<a className="file-message" href={m.media_url} target="_blank" rel="noreferrer">📎 <span>{m.content||"Файл"}</span></a>:m.content}<small>{timeOf(m.created_at)}{m.edited?" · изменено":""}{mine&&<span className="delivery">{m.read_at?<CheckCheck size={14}/>:m.delivered_at?<CheckCheck size={14}/>:<Check size={14}/>}</span>}</small></>}
  </div>{Object.keys(grouped).length>0&&<div className="reaction-row">{Object.entries(grouped).map(([emoji,rs]:any)=><button key={emoji} className={rs.some((r:any)=>r.user_id===m.sender_id)?"reacted":""} onClick={()=>toggleReaction(m.id,emoji)}>{emoji} {rs.length}</button>)}</div>}
- {menuOpen&&!deleted&&createPortal(<div className="message-sheet-layer" role="presentation"><div className="message-sheet-backdrop" onClick={()=>setMenuOpen(false)}/><div className="message-sheet" role="dialog" aria-label="Действия с сообщением"><div className="quick-reactions">{["👍","❤️","😂","🔥","😮"].map(e=><button key={e} onClick={()=>{toggleReaction(m.id,e);setMenuOpen(false)}}>{e}</button>)}</div><button onClick={()=>{onReply(m);setMenuOpen(false)}}><Reply size={19}/>Ответить</button><button onClick={async()=>{await togglePin(m);setMenuOpen(false)}}>{isPinned?"📍 Открепить":"📌 Закрепить"}</button>{m.message_type!=="image"&&<button onClick={()=>{copyText(m.content);setMenuOpen(false)}}><Copy size={19}/>Копировать</button>}{mine&&m.message_type!=="image"&&<button onClick={()=>{setEditingId(m.id);setEditingText(m.content);setMenuOpen(false)}}><Pencil size={19}/>Редактировать</button>}{mine&&<button className="danger" onClick={()=>{deleteMessage(m.id);setMenuOpen(false)}}><Trash2 size={19}/>Удалить</button>}<button className="cancel" onClick={()=>setMenuOpen(false)}>Отмена</button></div></div>,document.body)}</div></div>
+ {menuOpen&&!deleted&&<><div className="message-sheet-backdrop" onClick={()=>setMenuOpen(false)}/><div className="message-sheet"><div className="quick-reactions">{["👍","❤️","😂","🔥","😮"].map(e=><button key={e} onClick={()=>{toggleReaction(m.id,e);setMenuOpen(false)}}>{e}</button>)}</div><button onClick={()=>{onReply(m);setMenuOpen(false)}}><Reply size={19}/>Ответить</button><button onClick={async()=>{await togglePin(m);setMenuOpen(false)}}>{isPinned?"📍 Открепить":"📌 Закрепить"}</button>{m.message_type!=="image"&&<button onClick={()=>{copyText(m.content);setMenuOpen(false)}}><Copy size={19}/>Копировать</button>}{mine&&m.message_type!=="image"&&<button onClick={()=>{setEditingId(m.id);setEditingText(m.content);setMenuOpen(false)}}><Pencil size={19}/>Редактировать</button>}{mine&&<button className="danger" onClick={()=>{deleteMessage(m.id);setMenuOpen(false)}}><Trash2 size={19}/>Удалить</button>}<button className="cancel" onClick={()=>setMenuOpen(false)}>Отмена</button></div></>}</div></div>
 }
 
 type SettingsPanelProps = { dark:boolean; setDark:(value:boolean)=>void; notifications:boolean; requestNotifications:()=>void; setNotifications:(value:boolean)=>void; installEvent:any; logout:()=>void; userId:string; };
