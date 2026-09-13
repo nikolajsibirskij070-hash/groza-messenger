@@ -662,3 +662,59 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
 @media(max-width:760px){
   .message-sheet{bottom:max(70px,calc(env(safe-area-inset-bottom) + 62px))!important;width:calc(100vw - 24px)!important;max-height:min(76dvh,620px)!important}
 }
+
+
+/* v47: message action sheet — fixed viewport layer, never positioned by the message/chat tree. */
+.message-sheet-layer{
+  position:fixed!important;
+  inset:0!important;
+  width:100vw!important;
+  height:100dvh!important;
+  min-height:100dvh!important;
+  max-height:100dvh!important;
+  z-index:2147483000!important;
+  pointer-events:none!important;
+  display:block!important;
+  margin:0!important;
+  padding:0!important;
+  transform:none!important;
+  animation:none!important;
+}
+.message-sheet-layer .message-sheet-backdrop{
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  z-index:0!important;
+  pointer-events:auto!important;
+}
+.message-sheet-layer .message-sheet{
+  position:absolute!important;
+  left:50%!important;
+  right:auto!important;
+  top:auto!important;
+  bottom:calc(62px + max(8px, env(safe-area-inset-bottom)) + 80px)!important;
+  width:min(430px, calc(100vw - 24px))!important;
+  max-height:min(76dvh, 620px)!important;
+  height:auto!important;
+  overflow-y:auto!important;
+  overscroll-behavior:contain!important;
+  box-sizing:border-box!important;
+  z-index:1!important;
+  pointer-events:auto!important;
+  transform:translateX(-50%)!important;
+  animation:grozaSheet47 .18s ease-out!important;
+  margin:0!important;
+}
+@keyframes grozaSheet47{
+  from{opacity:0;transform:translateX(-50%) translateY(18px)!important}
+  to{opacity:1;transform:translateX(-50%) translateY(0)!important}
+}
+@media(max-width:760px){
+  .message-sheet-layer{height:100dvh!important;min-height:100dvh!important;max-height:100dvh!important}
+  .message-sheet-layer .message-sheet{
+    bottom:calc(62px + max(8px, env(safe-area-inset-bottom)) + 80px)!important;
+    width:calc(100vw - 24px)!important;
+    max-height:min(76dvh,620px)!important;
+  }
+}
