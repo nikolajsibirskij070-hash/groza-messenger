@@ -653,3 +653,12 @@ nav button.active{background:linear-gradient(135deg,rgba(120,105,235,.24),rgba(9
 .pinned-message-highlight .bubble{animation:grozaPinnedFlash 1.8s ease}
 @keyframes grozaPinnedFlash{0%,100%{outline:0}20%,70%{outline:2px solid var(--accent);outline-offset:3px}}
 @media(max-width:760px){.message-sheet{bottom:max(12px,calc(env(safe-area-inset-bottom) + 8px))!important;max-height:76vh;width:calc(100vw - 24px)}}
+
+
+/* v46: message action sheet is rendered in document.body. It is therefore independent
+   from animated/scrolling message ancestors and always occupies the same viewport slot. */
+.message-sheet-backdrop{position:fixed!important;inset:0!important;z-index:10000!important}
+.message-sheet{position:fixed!important;left:50%!important;right:auto!important;top:auto!important;bottom:76px!important;transform:translateX(-50%)!important;z-index:10001!important;width:min(430px,calc(100vw - 28px))!important;max-height:min(72vh,620px)!important;overflow-y:auto!important;overscroll-behavior:contain!important}
+@media(max-width:760px){
+  .message-sheet{bottom:max(70px,calc(env(safe-area-inset-bottom) + 62px))!important;width:calc(100vw - 24px)!important;max-height:min(76dvh,620px)!important}
+}
